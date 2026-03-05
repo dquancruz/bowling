@@ -1,0 +1,1244 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🎳 Bowling Semiautomático</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0a0a0f;
+    --surface:   #13131a;
+    --card:      #1a1a25;
+    --border:    #2a2a3e;
+    --accent:    #f5c518;
+    --accent2:   #e8450a;
+    --strike:    #ff6b00;
+    --spare:     #00b4d8;
+    --text:      #e8e8f0;
+    --muted:     #6b6b88;
+    --active:    #f5c518;
+    --glow:      rgba(245,197,24,0.15);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Barlow Condensed', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── SCANLINES overlay ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.08) 2px,
+      rgba(0,0,0,0.08) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* ── HEADER ── */
+  header {
+    background: var(--surface);
+    border-bottom: 2px solid var(--accent);
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 4px 30px rgba(245,197,24,0.1);
+  }
+
+  .logo {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 2rem;
+    letter-spacing: 4px;
+    color: var(--accent);
+    text-shadow: 0 0 20px rgba(245,197,24,0.5);
+  }
+
+  .logo span { color: var(--accent2); }
+
+  .status-bar {
+    display: flex; gap: 20px; align-items: center;
+  }
+
+  .ws-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: #333;
+    transition: all 0.3s;
+  }
+  .ws-dot.connected { background: #39ff14; box-shadow: 0 0 8px #39ff14; }
+  .ws-dot.error     { background: var(--accent2); }
+
+  .status-text {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--muted);
+    letter-spacing: 1px;
+  }
+
+  /* ── MAIN LAYOUT ── */
+  main {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 24px;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    gap: 20px;
+    min-height: calc(100vh - 68px);
+  }
+
+  /* ── TABS ── */
+  .tabs {
+    display: flex; gap: 4px;
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 0;
+  }
+
+  .tab {
+    padding: 10px 24px;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.1rem;
+    letter-spacing: 2px;
+    color: var(--muted);
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
+    transition: all 0.2s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  /* ── PANELS ── */
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* ── SCOREBOARD ── */
+  .scoreboard-wrap {
+    overflow-x: auto;
+    padding-bottom: 8px;
+  }
+
+  .scoreboard {
+    min-width: 900px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .sb-header {
+    display: grid;
+    grid-template-columns: 160px repeat(10, 1fr) 80px;
+    background: var(--card);
+    border-bottom: 2px solid var(--border);
+  }
+
+  .sb-cell {
+    padding: 8px 4px;
+    text-align: center;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 0.95rem;
+    letter-spacing: 1px;
+    color: var(--muted);
+    border-right: 1px solid var(--border);
+  }
+  .sb-cell:last-child { border-right: none; }
+  .sb-cell.player-name {
+    text-align: left;
+    padding-left: 16px;
+    font-size: 1rem;
+  }
+
+  .sb-row {
+    display: grid;
+    grid-template-columns: 160px repeat(10, 1fr) 80px;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.3s;
+  }
+  .sb-row:last-child { border-bottom: none; }
+  .sb-row.current-player {
+    background: rgba(245, 197, 24, 0.06);
+  }
+
+  .player-label {
+    padding: 8px 16px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    border-right: 1px solid var(--border);
+  }
+
+  .player-label .pname {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.2rem;
+    letter-spacing: 2px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .current-player .pname { color: var(--accent); }
+
+  .player-label .pstatus {
+    font-size: 0.7rem;
+    color: var(--muted);
+    font-family: 'Share Tech Mono', monospace;
+  }
+
+  .frame-cell {
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    min-height: 64px;
+  }
+  .frame-cell:last-of-type { border-right: none; }
+
+  .rolls-row {
+    display: flex;
+    justify-content: flex-end;
+    padding: 4px 4px 2px;
+    gap: 3px;
+    min-height: 28px;
+  }
+
+  .roll-box {
+    width: 22px; height: 22px;
+    border-radius: 3px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--muted);
+    flex-shrink: 0;
+  }
+
+  .roll-box.strike {
+    background: rgba(255,107,0,0.2);
+    border-color: var(--strike);
+    color: var(--strike);
+    font-weight: bold;
+    box-shadow: 0 0 6px rgba(255,107,0,0.3);
+  }
+
+  .roll-box.spare {
+    background: rgba(0,180,216,0.2);
+    border-color: var(--spare);
+    color: var(--spare);
+  }
+
+  .cumulative-score {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 1rem;
+    color: var(--text);
+    border-top: 1px solid var(--border);
+    padding: 4px;
+    min-height: 36px;
+  }
+
+  .total-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.6rem;
+    letter-spacing: 1px;
+    color: var(--accent);
+    border-left: 1px solid var(--border);
+  }
+  .current-player .total-cell {
+    text-shadow: 0 0 12px rgba(245,197,24,0.5);
+  }
+
+  /* ── PIN DISPLAY ── */
+  .pin-display {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .pin-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1rem;
+    letter-spacing: 3px;
+    color: var(--muted);
+  }
+
+  .pins-layout {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+  }
+
+  .pins-row {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+  }
+
+  .pin {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.65rem;
+    font-weight: bold;
+    transition: all 0.3s;
+    background: var(--card);
+    color: var(--muted);
+  }
+
+  .pin.standing {
+    background: #1e1e30;
+    border-color: #4a4a6a;
+    color: #7070a0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5), inset 0 1px 2px rgba(255,255,255,0.05);
+  }
+
+  .pin.fallen {
+    background: rgba(245,197,24,0.1);
+    border-color: var(--accent);
+    color: var(--accent);
+    box-shadow: 0 0 12px rgba(245,197,24,0.3);
+    transform: scale(0.85);
+    opacity: 0.4;
+  }
+
+  .pin.just-fallen {
+    animation: pin-fall 0.5s ease-out;
+  }
+
+  @keyframes pin-fall {
+    0%   { transform: scale(1.3); background: rgba(245,197,24,0.4); }
+    100% { transform: scale(0.85); }
+  }
+
+  /* ── CONTROLS PANEL ── */
+  .controls-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+  }
+
+  .control-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 20px;
+  }
+
+  .control-card h3 {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.1rem;
+    letter-spacing: 3px;
+    color: var(--accent);
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 10px;
+  }
+
+  .form-row {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  label {
+    font-size: 0.8rem;
+    letter-spacing: 1px;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  input[type="text"], input[type="number"], select {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text);
+    padding: 8px 12px;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 1rem;
+    width: 100%;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  input:focus, select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--glow);
+  }
+
+  .player-inputs { display: flex; flex-direction: column; gap: 6px; }
+
+  .player-input-row {
+    display: flex; gap: 8px; align-items: center;
+  }
+
+  .player-input-row input { flex: 1; }
+
+  .btn-remove {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 6px 10px;
+    cursor: pointer;
+    border-radius: 3px;
+    font-size: 1rem;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+  .btn-remove:hover { border-color: var(--accent2); color: var(--accent2); }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 20px;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1rem;
+    letter-spacing: 2px;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #000;
+    width: 100%;
+  }
+  .btn-primary:hover {
+    background: #ffd44a;
+    box-shadow: 0 0 20px rgba(245,197,24,0.4);
+    transform: translateY(-1px);
+  }
+
+  .btn-secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    width: 100%;
+  }
+  .btn-secondary:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .btn-danger {
+    background: transparent;
+    border: 1px solid var(--accent2);
+    color: var(--accent2);
+    width: 100%;
+  }
+  .btn-danger:hover {
+    background: rgba(232,69,10,0.15);
+    box-shadow: 0 0 15px rgba(232,69,10,0.3);
+  }
+
+  .btn-add {
+    background: transparent;
+    border: 1px dashed var(--border);
+    color: var(--muted);
+    width: 100%;
+    margin-top: 4px;
+  }
+  .btn-add:hover { border-color: var(--accent); color: var(--accent); }
+
+  .btn-group { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+
+  /* Pin buttons for manual */
+  .pin-buttons {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+  }
+
+  .btn-pin {
+    padding: 10px 6px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.1rem;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-pin:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--glow);
+  }
+  .btn-pin:active { transform: scale(0.92); }
+
+  /* ── NOTIFICATION TOAST ── */
+  #toast {
+    position: fixed;
+    top: 80px; right: 24px;
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-left: 4px solid var(--accent);
+    padding: 14px 20px;
+    border-radius: 4px;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.1rem;
+    letter-spacing: 2px;
+    color: var(--accent);
+    box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+    opacity: 0;
+    transform: translateX(120%);
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    z-index: 1000;
+    max-width: 320px;
+  }
+
+  #toast.show {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  #toast.strike { border-color: var(--strike); color: var(--strike); }
+  #toast.spare  { border-color: var(--spare); color: var(--spare); }
+
+  /* ── HISTORY ── */
+  .history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .history-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 16px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+  .history-item:hover { border-color: var(--accent); }
+
+  .h-date {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+
+  .h-players {
+    display: flex; gap: 12px; flex-wrap: wrap;
+  }
+
+  .h-player {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 0.95rem;
+    letter-spacing: 1px;
+  }
+  .h-player.winner { color: var(--accent); }
+
+  .h-status {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.7rem;
+    padding: 3px 8px;
+    border-radius: 2px;
+    background: var(--card);
+    color: var(--muted);
+    border: 1px solid var(--border);
+  }
+  .h-status.finished { border-color: #39ff14; color: #39ff14; }
+
+  /* ── CURRENT PLAYER INDICATOR ── */
+  .current-indicator {
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 0 20px var(--glow);
+    margin-bottom: 16px;
+  }
+
+  .ci-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--muted);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  .ci-name {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.8rem;
+    letter-spacing: 3px;
+    color: var(--accent);
+    text-shadow: 0 0 20px rgba(245,197,24,0.4);
+  }
+
+  .ci-frame {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
+  .ci-frame span {
+    color: var(--text);
+    font-size: 1.2rem;
+  }
+
+  /* ── EMPTY STATES ── */
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--muted);
+  }
+
+  .empty-state .icon {
+    font-size: 3rem;
+    margin-bottom: 12px;
+    display: block;
+    opacity: 0.4;
+  }
+
+  .empty-state p {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.2rem;
+    letter-spacing: 2px;
+  }
+
+  /* ── CONFIG ── */
+  .config-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+  }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 768px) {
+    main { padding: 12px; }
+    .logo { font-size: 1.4rem; }
+    .controls-grid { grid-template-columns: 1fr; }
+    .current-indicator { flex-direction: column; gap: 8px; text-align: center; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">🎳 BOWL<span>ING</span></div>
+  <div class="status-bar">
+    <div class="ws-dot" id="wsDot"></div>
+    <div class="status-text" id="wsStatus">DESCONECTADO</div>
+  </div>
+</header>
+
+<main>
+  <!-- TABS -->
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('scoreboard')">MARCADOR</button>
+    <button class="tab" onclick="switchTab('controls')">CONTROLES</button>
+    <button class="tab" onclick="switchTab('history')">HISTORIAL</button>
+    <button class="tab" onclick="switchTab('config')">CONFIGURACIÓN</button>
+  </div>
+
+  <!-- ── SCOREBOARD TAB ── -->
+  <div class="panel active" id="tab-scoreboard">
+    <div id="currentIndicator" style="display:none;" class="current-indicator">
+      <div>
+        <div class="ci-label">TURNO ACTUAL</div>
+        <div class="ci-name" id="ciName">—</div>
+      </div>
+      <div style="text-align:right">
+        <div class="ci-label">FRAME</div>
+        <div class="ci-frame"><span id="ciFrame">1</span> / 10</div>
+      </div>
+    </div>
+
+    <div id="noGame" class="empty-state">
+      <span class="icon">🎳</span>
+      <p>Sin partida activa</p>
+      <p style="font-size:0.85rem;margin-top:8px;font-family:'Share Tech Mono',monospace;color:#444">Ve a CONTROLES para iniciar una partida</p>
+    </div>
+
+    <div id="gameArea" style="display:none;">
+      <div class="scoreboard-wrap">
+        <div class="scoreboard">
+          <div class="sb-header">
+            <div class="sb-cell player-name">JUGADOR</div>
+            <div class="sb-cell">1</div><div class="sb-cell">2</div>
+            <div class="sb-cell">3</div><div class="sb-cell">4</div>
+            <div class="sb-cell">5</div><div class="sb-cell">6</div>
+            <div class="sb-cell">7</div><div class="sb-cell">8</div>
+            <div class="sb-cell">9</div><div class="sb-cell">10</div>
+            <div class="sb-cell">TOTAL</div>
+          </div>
+          <div id="playerRows"></div>
+        </div>
+      </div>
+
+      <!-- Pin Layout -->
+      <div style="margin-top:16px; display:grid; grid-template-columns:1fr auto; gap:16px; align-items:start;">
+        <div class="pin-display">
+          <div class="pin-title">ESTADO DE LOS PINES</div>
+          <div class="pins-layout" id="pinsLayout">
+            <!-- Generado por JS -->
+          </div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:10px; width:180px;">
+          <button class="btn btn-secondary" onclick="resetPins()">↺ RESETEAR PINES</button>
+          <button class="btn btn-danger" onclick="endGame()">■ TERMINAR PARTIDA</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CONTROLS TAB ── -->
+  <div class="panel" id="tab-controls">
+    <div class="controls-grid">
+
+      <!-- Nueva partida -->
+      <div class="control-card">
+        <h3>Nueva Partida</h3>
+        <div class="form-row">
+          <label>Jugadores</label>
+          <div class="player-inputs" id="playerInputs">
+            <div class="player-input-row">
+              <input type="text" placeholder="Jugador 1" value="Jugador 1">
+              <button class="btn-remove" onclick="removePlayer(this)">✕</button>
+            </div>
+            <div class="player-input-row">
+              <input type="text" placeholder="Jugador 2" value="Jugador 2">
+              <button class="btn-remove" onclick="removePlayer(this)">✕</button>
+            </div>
+          </div>
+          <button class="btn btn-add" onclick="addPlayer()">+ AGREGAR JUGADOR</button>
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-primary" onclick="startGame()">▶ INICIAR PARTIDA</button>
+        </div>
+      </div>
+
+      <!-- Control manual de pines -->
+      <div class="control-card">
+        <h3>Simular / Corregir Pin</h3>
+        <p style="font-size:0.8rem;color:var(--muted);margin-bottom:14px;font-family:'Share Tech Mono',monospace;">
+          Para testing o corrección manual
+        </p>
+        <div class="pin-buttons">
+          <button class="btn-pin" onclick="manualPin(7)">7</button>
+          <button class="btn-pin" onclick="manualPin(8)">8</button>
+          <button class="btn-pin" onclick="manualPin(9)">9</button>
+          <button class="btn-pin" onclick="manualPin(10)">10</button>
+          <div></div>
+          <button class="btn-pin" onclick="manualPin(4)">4</button>
+          <button class="btn-pin" onclick="manualPin(5)">5</button>
+          <button class="btn-pin" onclick="manualPin(6)">6</button>
+          <div></div><div></div>
+          <button class="btn-pin" onclick="manualPin(2)">2</button>
+          <button class="btn-pin" onclick="manualPin(3)">3</button>
+          <div></div><div></div><div></div>
+          <button class="btn-pin" onclick="manualPin(1)">1</button>
+          <div></div><div></div><div></div><div></div>
+        </div>
+        <div class="btn-group" style="margin-top:14px;">
+          <button class="btn btn-secondary" onclick="resetPins()">↺ RESETEAR PINES</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── HISTORY TAB ── -->
+  <div class="panel" id="tab-history">
+    <div class="history-list" id="historyList">
+      <div class="empty-state">
+        <span class="icon">📋</span>
+        <p>Cargando historial...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CONFIG TAB ── -->
+  <div class="panel" id="tab-config">
+    <div class="config-grid">
+      <div class="control-card">
+        <h3>Reglas del Juego</h3>
+        <div class="form-row">
+          <label>Máximo de jugadores</label>
+          <input type="number" id="cfgMaxPlayers" min="1" max="8" value="6">
+        </div>
+        <div class="form-row">
+          <label>Modo de juego</label>
+          <select id="cfgMode">
+            <option value="classic">Clásico (10 frames)</option>
+            <option value="quick">Rápido (5 frames)</option>
+          </select>
+        </div>
+        <div class="form-row" style="flex-direction:row;align-items:center;gap:10px;">
+          <input type="checkbox" id="cfgManual" checked style="width:auto;">
+          <label for="cfgManual" style="text-transform:none;">Permitir corrección manual</label>
+        </div>
+        <div class="form-row" style="flex-direction:row;align-items:center;gap:10px;">
+          <input type="checkbox" id="cfgAutoReset" style="width:auto;">
+          <label for="cfgAutoReset" style="text-transform:none;">Auto-resetear pines</label>
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-primary" onclick="saveConfig()">💾 GUARDAR CONFIGURACIÓN</button>
+        </div>
+      </div>
+
+      <div class="control-card">
+        <h3>Info del Sistema</h3>
+        <div style="font-family:'Share Tech Mono',monospace;font-size:0.75rem;color:var(--muted);line-height:2;">
+          <div>BACKEND: <span style="color:var(--text)" id="infoBackend">—</span></div>
+          <div>WEBSOCKET: <span style="color:var(--text)" id="infoWS">—</span></div>
+          <div>GPIO: <span style="color:var(--text)" id="infoGPIO">Raspberry Pi</span></div>
+          <div>DB: <span style="color:var(--text)">MongoDB</span></div>
+          <div style="margin-top:12px;">PINES GPIO (BCM):</div>
+          <div style="color:var(--text)">P1→17 P2→18 P3→27 P4→22 P5→23</div>
+          <div style="color:var(--text)">P6→24 P7→25 P8→4 P9→5 P10→6</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════════════════
+// CONFIG
+// ══════════════════════════════════════════════════════
+const API = `${location.protocol}//${location.hostname}:8000/api`;
+const WS_URL = `ws://${location.hostname}:8000/ws`;
+
+let ws = null;
+let gameState = null;
+let wsReconnectTimer = null;
+
+// ══════════════════════════════════════════════════════
+// WEBSOCKET
+// ══════════════════════════════════════════════════════
+function connectWS() {
+  try {
+    ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+      setWsStatus('connected');
+      document.getElementById('infoWS').textContent = 'CONECTADO';
+      if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+    };
+
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      handleWSMessage(msg);
+    };
+
+    ws.onclose = () => {
+      setWsStatus('disconnected');
+      document.getElementById('infoWS').textContent = 'DESCONECTADO';
+      wsReconnectTimer = setTimeout(connectWS, 3000);
+    };
+
+    ws.onerror = () => setWsStatus('error');
+
+  } catch(err) {
+    console.error('WS error:', err);
+    wsReconnectTimer = setTimeout(connectWS, 3000);
+  }
+}
+
+function setWsStatus(state) {
+  const dot = document.getElementById('wsDot');
+  const txt = document.getElementById('wsStatus');
+  dot.className = 'ws-dot ' + state;
+  txt.textContent = state === 'connected' ? 'EN LÍNEA' :
+                    state === 'error'     ? 'ERROR'    : 'DESCONECTADO';
+}
+
+function handleWSMessage(msg) {
+  // Actualizar estado global si viene en el mensaje
+  if (msg.game_state) {
+    gameState = msg.game_state;
+  }
+
+  switch(msg.type) {
+    case 'initial_state':
+      renderGame();
+      break;
+
+    case 'game_started':
+      renderGame();
+      showToast('¡PARTIDA INICIADA!', '');
+      break;
+
+    case 'pin_fallen':
+      renderGame();
+      // Strike: auto_commit fue true, el tiro ya se registró
+      if (msg.auto_commit) {
+        if (msg.roll_type === 'strike') showToast('🎳 ¡STRIKE!', 'strike');
+      }
+      if (msg.game_over) showToast(`🏆 FIN · GANADOR: ${msg.winner}`, 'strike');
+      break;
+
+    case 'roll_committed':
+      renderGame();
+      if (msg.roll_type === 'spare') showToast('✅ SPARE', 'spare');
+      else if (msg.roll_type === 'strike') showToast('🎳 ¡STRIKE!', 'strike');
+      if (msg.game_over) showToast(`🏆 FIN · GANADOR: ${msg.winner}`, 'strike');
+      break;
+
+    case 'pins_reset':
+      renderGame();
+      break;
+
+    case 'game_ended':
+      gameState = msg.game_state || null;
+      renderGame();
+      showToast('PARTIDA FINALIZADA', '');
+      break;
+
+    case 'config_updated':
+      loadConfig();
+      break;
+  }
+}
+
+// ══════════════════════════════════════════════════════
+// RENDER
+// ══════════════════════════════════════════════════════
+function renderGame() {
+  const noGame = document.getElementById('noGame');
+  const gameArea = document.getElementById('gameArea');
+  const indicator = document.getElementById('currentIndicator');
+
+  if (!gameState || gameState.status === 'finished') {
+    noGame.style.display = '';
+    gameArea.style.display = 'none';
+    indicator.style.display = 'none';
+
+    if (gameState?.status === 'finished') {
+      noGame.innerHTML = `
+        <span class="icon">🏆</span>
+        <p>PARTIDA FINALIZADA</p>
+        <p style="color:var(--accent);font-family:'Bebas Neue';font-size:1.5rem;margin-top:8px;letter-spacing:3px;">
+          GANADOR: ${gameState.winner || '—'}
+        </p>`;
+    }
+    return;
+  }
+
+  noGame.style.display = 'none';
+  gameArea.style.display = '';
+  indicator.style.display = '';
+
+  // Current player indicator
+  document.getElementById('ciName').textContent = gameState.current_player || '—';
+  const cp = gameState.players.find(p => p.name === gameState.current_player);
+  document.getElementById('ciFrame').textContent = cp ? cp.current_frame : '?';
+
+  // Render player rows
+  const container = document.getElementById('playerRows');
+  container.innerHTML = '';
+
+  gameState.players.forEach(player => {
+    const isActive = player.name === gameState.current_player;
+    const row = document.createElement('div');
+    row.className = 'sb-row' + (isActive ? ' current-player' : '');
+
+    let framesHTML = '';
+    for (let i = 0; i < 10; i++) {
+      const frame = player.frames[i];
+      const score = player.scores[i];
+      const isLast = i === 9;
+
+      let rollsHTML = '';
+      if (frame && frame.rolls.length > 0) {
+        frame.rolls.forEach((roll, ri) => {
+          let cls = 'roll-box';
+          let display = roll;
+
+          if (!isLast) {
+            if (ri === 0 && roll === 10) { cls += ' strike'; display = 'X'; }
+            else if (ri === 1 && frame.rolls[0] + roll === 10) { cls += ' spare'; display = '/'; }
+            else if (roll === 0) display = '-';
+          } else {
+            if (roll === 10) { cls += ' strike'; display = 'X'; }
+            else if (ri > 0 && roll === 10 - frame.rolls[ri-1]) { cls += ' spare'; display = '/'; }
+            else if (roll === 0) display = '-';
+          }
+
+          rollsHTML += `<div class="${cls}">${display}</div>`;
+        });
+      }
+
+      framesHTML += `
+        <div class="frame-cell">
+          <div class="rolls-row">${rollsHTML}</div>
+          <div class="cumulative-score">${score !== null && score !== undefined ? score : ''}</div>
+        </div>`;
+    }
+
+    row.innerHTML = `
+      <div class="player-label">
+        <div class="pname">${player.name}</div>
+        <div class="pstatus">${isActive ? '▶ EN JUEGO' : 'frame ' + player.current_frame}</div>
+      </div>
+      ${framesHTML}
+      <div class="total-cell">${player.total}</div>`;
+
+    container.appendChild(row);
+  });
+
+  // Render pins
+  if (cp) renderPins(cp.pins_up);
+}
+
+function renderPins(pinsUp) {
+  const layout = document.getElementById('pinsLayout');
+  layout.innerHTML = '';
+
+  // Formación correcta del bowling (vista desde atrás, como el jugador)
+  //  Fila 4 (fondo):  7  8  9  10
+  //  Fila 3:          4  5  6
+  //  Fila 2:          2  3
+  //  Fila 1 (frente): 1
+  const rows = [
+    [7, 8, 9, 10],
+    [4, 5, 6],
+    [2, 3],
+    [1]
+  ];
+
+  rows.forEach(row => {
+    const rowDiv = document.createElement('div');
+    rowDiv.className = 'pins-row';
+    row.forEach(pinNum => {
+      const pin = document.createElement('div');
+      const standing = !pinsUp || pinsUp[pinNum - 1] !== false;
+      pin.className = 'pin ' + (standing ? 'standing' : 'fallen');
+      pin.textContent = pinNum;
+      rowDiv.appendChild(pin);
+    });
+    layout.appendChild(rowDiv);
+  });
+}
+
+// ══════════════════════════════════════════════════════
+// ACTIONS
+// ══════════════════════════════════════════════════════
+async function startGame() {
+  const inputs = document.querySelectorAll('#playerInputs input[type="text"]');
+  const players = Array.from(inputs).map(i => i.value.trim()).filter(Boolean);
+
+  if (players.length === 0) { showToast('AÑADE AL MENOS UN JUGADOR', ''); return; }
+
+  const res = await fetch(`${API}/game/new`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ players })
+  });
+
+  if (res.ok) {
+    const data = await res.json();
+    gameState = data.game;
+    renderGame();
+    switchTab('scoreboard');
+    showToast('¡PARTIDA INICIADA!', '');
+  } else {
+    showToast('ERROR AL INICIAR', '');
+  }
+}
+
+async function manualPin(pinNum) {
+  const res = await fetch(`${API}/game/manual-pin`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pin_number: pinNum })
+  });
+  if (!res.ok) showToast('NO HAY PARTIDA ACTIVA', '');
+}
+
+async function resetPins() {
+  await fetch(`${API}/game/reset-pins`, { method: 'POST' });
+}
+
+async function endGame() {
+  if (!confirm('¿Terminar la partida actual?')) return;
+  await fetch(`${API}/game/end`, { method: 'POST' });
+}
+
+async function saveConfig() {
+  const config = {
+    max_players: parseInt(document.getElementById('cfgMaxPlayers').value),
+    game_mode: document.getElementById('cfgMode').value,
+    allow_manual_override: document.getElementById('cfgManual').checked,
+    auto_reset_pins: document.getElementById('cfgAutoReset').checked,
+    frames_per_game: 10,
+    pins_per_frame: 10
+  };
+
+  const res = await fetch(`${API}/config`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config)
+  });
+
+  if (res.ok) showToast('✅ CONFIGURACIÓN GUARDADA', '');
+  else showToast('ERROR AL GUARDAR', '');
+}
+
+async function loadConfig() {
+  try {
+    const res = await fetch(`${API}/config`);
+    const cfg = await res.json();
+    document.getElementById('cfgMaxPlayers').value = cfg.max_players || 6;
+    document.getElementById('cfgMode').value = cfg.game_mode || 'classic';
+    document.getElementById('cfgManual').checked = cfg.allow_manual_override !== false;
+    document.getElementById('cfgAutoReset').checked = !!cfg.auto_reset_pins;
+    document.getElementById('infoBackend').textContent = 'CONECTADO';
+  } catch(e) {
+    document.getElementById('infoBackend').textContent = 'SIN CONEXIÓN';
+  }
+}
+
+async function loadHistory() {
+  try {
+    const res = await fetch(`${API}/games/history?limit=20`);
+    const data = await res.json();
+    const list = document.getElementById('historyList');
+
+    if (!data.games || data.games.length === 0) {
+      list.innerHTML = `<div class="empty-state"><span class="icon">📋</span><p>SIN PARTIDAS REGISTRADAS</p></div>`;
+      return;
+    }
+
+    list.innerHTML = data.games.map(g => {
+      const date = g.created_at ? new Date(g.created_at).toLocaleString('es-AR') : '—';
+      const playersHTML = g.players.map(p =>
+        `<span class="h-player ${g.winner === p.name ? 'winner' : ''}">
+          ${p.name} ${g.winner === p.name ? '🏆' : ''} <span style="color:var(--accent)">${p.total}</span>
+        </span>`
+      ).join('');
+
+      return `<div class="history-item">
+        <div>
+          <div class="h-date">${date}</div>
+          <div class="h-players" style="margin-top:6px;">${playersHTML}</div>
+        </div>
+        <div class="h-status ${g.status}">${g.status.toUpperCase()}</div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('historyList').innerHTML =
+      `<div class="empty-state"><span class="icon">⚠️</span><p>ERROR AL CARGAR</p></div>`;
+  }
+}
+
+// ══════════════════════════════════════════════════════
+// UI HELPERS
+// ══════════════════════════════════════════════════════
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    const tabs = ['scoreboard','controls','history','config'];
+    t.classList.toggle('active', tabs[i] === name);
+  });
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById(`tab-${name}`).classList.add('active');
+
+  if (name === 'history') loadHistory();
+  if (name === 'config') loadConfig();
+}
+
+function addPlayer() {
+  const inputs = document.querySelectorAll('#playerInputs .player-input-row');
+  if (inputs.length >= 6) { showToast('MÁXIMO 6 JUGADORES', ''); return; }
+
+  const n = inputs.length + 1;
+  const div = document.createElement('div');
+  div.className = 'player-input-row';
+  div.innerHTML = `
+    <input type="text" placeholder="Jugador ${n}" value="Jugador ${n}">
+    <button class="btn-remove" onclick="removePlayer(this)">✕</button>`;
+  document.getElementById('playerInputs').appendChild(div);
+}
+
+function removePlayer(btn) {
+  const rows = document.querySelectorAll('#playerInputs .player-input-row');
+  if (rows.length <= 1) return;
+  btn.parentElement.remove();
+}
+
+let toastTimer = null;
+function showToast(msg, type) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.className = 'show ' + (type || '');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.className = ''; }, 3000);
+}
+
+// ══════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════
+async function init() {
+  connectWS();
+  renderPins(null);
+
+  // Intentar cargar partida actual
+  try {
+    const res = await fetch(`${API}/game/current`);
+    if (res.ok) {
+      gameState = await res.json();
+      renderGame();
+    }
+  } catch(e) { /* sin partida activa */ }
+
+  // Heartbeat WS
+  setInterval(() => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'ping' }));
+    }
+  }, 15000);
+}
+
+init();
+</script>
+</body>
+</html>
