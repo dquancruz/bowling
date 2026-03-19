@@ -1,7 +1,16 @@
 """
-GPIO Handler para Raspberry Pi
-Maneja los 10 limit switches (finales de carrera), uno por pin de bowling
-Usa interrupciones para detectar cambios sin polling
+GPIO Handler para Raspberry Pi - Boliche Semiautomático
+========================================================
+ENTRADAS:
+  - 10 limit switches (finales de carrera) → pines caídos
+  - 1 sensor de retorno de bola (limit switch o IR)
+
+SALIDAS:
+  - LED verde    → bola en camino de regreso
+  - LED rojo     → bola llegó, lista para tirar
+  - LED amarillo → timer 20s, colocar pines manualmente
+  - Relay        → motor alimentador de bolas
+  - Servomotor   → palanca que empuja pines (90° reposo → 180° empuja → 90° vuelve)
 """
 
 import asyncio
@@ -11,47 +20,94 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# Pines GPIO BCM asignados a cada pin de bowling (1-10)
-# Ajustar según el cableado real en la Raspberry Pi
+# ─── PINES DE ENTRADA ────────────────────────────────────────────────────────
+#
+#  Pin bowling → GPIO (BCM) → Pin físico en la Pi
+#  ------------------------------------------------
+#  Bowling 1  → GPIO 17  → Pin físico 11
+#  Bowling 2  → GPIO 18  → Pin físico 12
+#  Bowling 3  → GPIO 27  → Pin físico 13
+#  Bowling 4  → GPIO 22  → Pin físico 15
+#  Bowling 5  → GPIO 23  → Pin físico 16
+#  Bowling 6  → GPIO 24  → Pin físico 18
+#  Bowling 7  → GPIO 25  → Pin físico 22
+#  Bowling 8  → GPIO 4   → Pin físico 7
+#  Bowling 9  → GPIO 5   → Pin físico 29
+#  Bowling 10 → GPIO 6   → Pin físico 31
+#  Sensor bola→ GPIO 16  → Pin físico 36
+#
+#  Cableado: cada switch entre GPIO y GND (pull-up interno activado)
+
 PIN_GPIO_MAP = {
-    1:  17,   # Pin de bowling 1  → GPIO 17
-    2:  18,   # Pin de bowling 2  → GPIO 18
-    3:  27,   # Pin de bowling 3  → GPIO 27
-    4:  22,   # Pin de bowling 4  → GPIO 22
-    5:  23,   # Pin de bowling 5  → GPIO 23
-    6:  24,   # Pin de bowling 6  → GPIO 24
-    7:  25,   # Pin de bowling 7  → GPIO 25
-    8:  4,    # Pin de bowling 8  → GPIO 4
-    9:  5,    # Pin de bowling 9  → GPIO 5
-    10: 6,    # Pin de bowling 10 → GPIO 6
+    1:  17,
+    2:  18,
+    3:  27,
+    4:  22,
+    5:  23,
+    6:  24,
+    7:  25,
+    8:  4,
+    9:  5,
+    10: 6,
 }
 
-# Debounce en ms para evitar lecturas múltiples de un mismo golpe
-DEBOUNCE_MS = 300
+GPIO_SENSOR_BOLA  = 16   # Sensor retorno de bola → Pin físico 36
 
-# Detectar si estamos en una Raspberry Pi real
+# ─── PINES DE SALIDA ─────────────────────────────────────────────────────────
+#
+#  Componente         → GPIO (BCM) → Pin físico
+#  -----------------------------------------------
+#  LED verde          → GPIO 19   → Pin físico 35   (bola en camino)
+#  LED rojo           → GPIO 26   → Pin físico 37   (bola lista)
+#  LED amarillo       → GPIO 20   → Pin físico 38   (timer 20s)
+#  Relay alimentador  → GPIO 21   → Pin físico 40   (motor retorno bola)
+#  Servo palanca      → GPIO 12   → Pin físico 32   (PWM 50Hz)
+#
+#  LEDs: resistencia 220Ω entre GPIO y GND
+#  Relay: activo en LOW
+#  Servo: VCC → 5V (pin 2 o 4), GND → GND, señal → GPIO 12
+
+GPIO_LED_VERDE    = 19   # Bola en camino de regreso   → Pin físico 35
+GPIO_LED_ROJO     = 26   # Bola llegó, listo para tirar → Pin físico 37
+GPIO_LED_AMARILLO = 20   # Timer 20s - colocar pines    → Pin físico 38
+
+GPIO_RELAY_ALIMENTADOR = 21  # Relay motor retorno de bola → Pin físico 40
+GPIO_SERVO_PALANCA     = 12  # Servomotor palanca (PWM)    → Pin físico 32
+
+# ─── CONFIGURACIÓN ───────────────────────────────────────────────────────────
+
+DEBOUNCE_MS   = 300
+TIMER_PINES_S = 20
+
+# Ángulos del servo → duty cycle PWM (frecuencia 50Hz)
+# Fórmula: duty = 2.5 + (angulo / 180) * 10
+SERVO_REPOSO  = 90   # grados → duty ~7.5%
+SERVO_EMPUJA  = 180  # grados → duty ~12.5%
+SERVO_TIEMPO  = 1.5  # segundos empujando antes de volver
+
+def angulo_a_duty(angulo: int) -> float:
+    """Convertir ángulo (0-180°) a duty cycle PWM (2.5% - 12.5%)"""
+    return 2.5 + (angulo / 180.0) * 10.0
+
 IS_RASPBERRY_PI = os.path.exists("/sys/bus/platform/drivers/raspberrypi-firmware")
 
 
 class GPIOHandler:
-    """
-    Maneja los 10 limit switches vía GPIO.
-    En modo simulación (no Raspberry Pi) permite testing sin hardware.
-    """
-
-    def __init__(self, pin_callback: Callable):
-        self.pin_callback = pin_callback  # async callback(pin_number: int)
+    def __init__(self, pin_callback: Callable, ball_return_callback: Callable):
+        self.pin_callback = pin_callback
+        self.ball_return_callback = ball_return_callback
         self.gpio = None
+        self.servo_pwm = None          # Instancia PWM del servo
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self._simulation_mode = not IS_RASPBERRY_PI
+        self._timer_task: Optional[asyncio.Task] = None
 
     async def setup(self):
-        """Inicializar GPIO o modo simulación"""
         self.loop = asyncio.get_event_loop()
 
         if self._simulation_mode:
             logger.warning("⚠️  GPIO en MODO SIMULACIÓN (no es Raspberry Pi)")
-            logger.info("   Usar POST /api/game/manual-pin para simular pines")
+            logger.info("   Usar endpoints /api/game/manual-pin para probar")
             return
 
         try:
@@ -60,19 +116,36 @@ class GPIOHandler:
             self.gpio.setmode(GPIO.BCM)
             self.gpio.setwarnings(False)
 
+            # ── Entradas: limit switches pines ──
             for pin_num, gpio_pin in PIN_GPIO_MAP.items():
-                # Configurar como entrada con resistencia pull-up
-                # El limit switch conecta el pin a GND cuando se activa
                 self.gpio.setup(gpio_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-
-                # Detectar flanco de bajada (HIGH→LOW = switch activado)
                 self.gpio.add_event_detect(
-                    gpio_pin,
-                    GPIO.FALLING,
-                    callback=self._make_callback(pin_num),
+                    gpio_pin, GPIO.FALLING,
+                    callback=self._make_pin_callback(pin_num),
                     bouncetime=DEBOUNCE_MS
                 )
-                logger.info(f"   Pin bowling {pin_num} → GPIO {gpio_pin} configurado")
+                logger.info(f"   Pin bowling {pin_num} → GPIO {gpio_pin}")
+
+            # ── Entrada: sensor retorno de bola ──
+            self.gpio.setup(GPIO_SENSOR_BOLA, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+            self.gpio.add_event_detect(
+                GPIO_SENSOR_BOLA, GPIO.FALLING,
+                callback=self._on_ball_returned,
+                bouncetime=500
+            )
+
+            # ── Salidas: LEDs ──
+            for pin in [GPIO_LED_VERDE, GPIO_LED_ROJO, GPIO_LED_AMARILLO]:
+                self.gpio.setup(pin, GPIO.OUT, initial=GPIO.LOW)
+
+            # ── Salida: Relay alimentador (HIGH = inactivo) ──
+            self.gpio.setup(GPIO_RELAY_ALIMENTADOR, GPIO.OUT, initial=GPIO.HIGH)
+
+            # ── Salida: Servo palanca (PWM 50Hz) ──
+            self.gpio.setup(GPIO_SERVO_PALANCA, GPIO.OUT)
+            self.servo_pwm = self.gpio.PWM(GPIO_SERVO_PALANCA, 50)  # 50Hz
+            self.servo_pwm.start(angulo_a_duty(SERVO_REPOSO))       # Posición reposo
+            logger.info(f"   Servo palanca → GPIO {GPIO_SERVO_PALANCA} (PWM 50Hz, reposo {SERVO_REPOSO}°)")
 
             logger.info("✅ GPIO configurado correctamente")
 
@@ -80,45 +153,155 @@ class GPIOHandler:
             logger.error("❌ RPi.GPIO no instalado. Ejecutar: pip install RPi.GPIO")
             self._simulation_mode = True
         except Exception as e:
-            logger.error(f"❌ Error al configurar GPIO: {e}")
+            logger.error(f"❌ Error GPIO: {e}")
             self._simulation_mode = True
 
-    def _make_callback(self, pin_number: int):
-        """Crear callback para un pin específico"""
+    # ─── CALLBACKS DE ENTRADA ────────────────────────────────────────────────
+
+    def _make_pin_callback(self, pin_number: int):
         def callback(channel):
-            logger.info(f"🎳 Limit switch activado: Pin {pin_number} (GPIO {channel})")
-            # Programar la corrutina async desde el thread de GPIO
+            logger.info(f"🎳 Pin {pin_number} caído (GPIO {channel})")
             if self.loop and self.loop.is_running():
                 asyncio.run_coroutine_threadsafe(
-                    self.pin_callback(pin_number),
-                    self.loop
+                    self.pin_callback(pin_number), self.loop
                 )
         return callback
 
-    async def simulate_pin(self, pin_number: int):
-        """Simular la caída de un pin (solo para testing)"""
-        if 1 <= pin_number <= 10:
-            logger.info(f"🎮 Simulando pin {pin_number}")
-            await self.pin_callback(pin_number)
+    def _on_ball_returned(self, channel):
+        logger.info("🎱 Sensor: bola retornada")
+        if self.loop and self.loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                self.ball_return_callback(), self.loop
+            )
+
+    # ─── CONTROL DE SALIDAS ──────────────────────────────────────────────────
+
+    def _set_led(self, pin: int, state: bool):
+        if self.gpio and not self._simulation_mode:
+            self.gpio.output(pin, self.gpio.HIGH if state else self.gpio.LOW)
+
+    def _set_relay(self, pin: int, active: bool):
+        """Relay activo en LOW"""
+        if self.gpio and not self._simulation_mode:
+            self.gpio.output(pin, self.gpio.LOW if active else self.gpio.HIGH)
+
+    def _set_servo(self, angulo: int):
+        """Mover servo a un ángulo (0-180°)"""
+        if self.servo_pwm and not self._simulation_mode:
+            duty = angulo_a_duty(angulo)
+            self.servo_pwm.ChangeDutyCycle(duty)
+            logger.info(f"⚙️  Servo → {angulo}° (duty {duty:.1f}%)")
         else:
-            logger.error(f"Número de pin inválido: {pin_number} (debe ser 1-10)")
+            logger.info(f"🎮 [SIM] Servo → {angulo}°")
+
+    # LEDs
+    def led_verde(self, state: bool):
+        self._set_led(GPIO_LED_VERDE, state)
+        logger.info(f"💚 LED verde: {'ON' if state else 'OFF'}")
+
+    def led_rojo(self, state: bool):
+        self._set_led(GPIO_LED_ROJO, state)
+        logger.info(f"🔴 LED rojo: {'ON' if state else 'OFF'}")
+
+    def led_amarillo(self, state: bool):
+        self._set_led(GPIO_LED_AMARILLO, state)
+        logger.info(f"🟡 LED amarillo: {'ON' if state else 'OFF'}")
+
+    # Relay alimentador
+    def alimentador(self, active: bool):
+        self._set_relay(GPIO_RELAY_ALIMENTADOR, active)
+        logger.info(f"⚙️  Alimentador bola: {'ON' if active else 'OFF'}")
+
+    # ─── SECUENCIAS ──────────────────────────────────────────────────────────
+
+    async def secuencia_retorno_bola(self):
+        """
+        Activar alimentador + LED verde (bola en camino).
+        El sensor de bola apaga esto cuando llega.
+        """
+        logger.info("🎱 Iniciando retorno de bola")
+        self.led_rojo(False)
+        self.led_verde(True)
+        self.alimentador(True)
+
+    async def bola_lista(self):
+        """Bola llegó al jugador → apagar alimentador, LED rojo ON"""
+        self.alimentador(False)
+        self.led_verde(False)
+        self.led_rojo(True)
+        logger.info("✅ Bola lista para tirar")
+
+    async def secuencia_ordenar_pines(self):
+        """
+        Después del 2do tiro (o strike):
+        1. Servo empuja pines caídos (90° → 180° → 90°)
+        2. LED amarillo ON + timer 20s
+        3. Timer termina → LED amarillo OFF
+        """
+        logger.info("🔧 Iniciando secuencia ordenado de pines")
+
+        # Mover servo a posición de empuje
+        self._set_servo(SERVO_EMPUJA)
+        await asyncio.sleep(SERVO_TIEMPO)
+
+        # Volver a reposo
+        self._set_servo(SERVO_REPOSO)
+        await asyncio.sleep(0.5)
+
+        # Iniciar timer 20s con LED amarillo
+        self.led_amarillo(True)
+        logger.info(f"⏱️  Timer {TIMER_PINES_S}s — colocar pines manualmente")
+
+        if self._timer_task and not self._timer_task.done():
+            self._timer_task.cancel()
+        self._timer_task = asyncio.create_task(self._timer_pines())
+
+    async def _timer_pines(self):
+        """Timer 20s → apaga LED amarillo"""
+        try:
+            await asyncio.sleep(TIMER_PINES_S)
+            self.led_amarillo(False)
+            logger.info("✅ Timer terminado — pines listos")
+        except asyncio.CancelledError:
+            self.led_amarillo(False)
+
+    def apagar_todo(self):
+        if self._simulation_mode:
+            return
+        self.led_verde(False)
+        self.led_rojo(False)
+        self.led_amarillo(False)
+        self.alimentador(False)
+        if self.servo_pwm:
+            self._set_servo(SERVO_REPOSO)
 
     def cleanup(self):
-        """Limpiar recursos GPIO"""
+        self.apagar_todo()
+        if self.servo_pwm:
+            try:
+                self.servo_pwm.stop()
+            except:
+                pass
         if self.gpio and not self._simulation_mode:
             try:
                 self.gpio.cleanup()
-                logger.info("GPIO limpiado correctamente")
+                logger.info("GPIO limpiado")
             except Exception as e:
-                logger.error(f"Error al limpiar GPIO: {e}")
+                logger.error(f"Error limpiando GPIO: {e}")
 
     @property
     def is_simulation(self) -> bool:
         return self._simulation_mode
 
     def get_pin_map(self) -> dict:
-        """Retornar el mapa de pines para documentación"""
         return {
-            f"bowling_pin_{k}": f"GPIO_{v} (BCM)"
-            for k, v in PIN_GPIO_MAP.items()
+            "entradas": {f"pin_bowling_{k}": f"GPIO_{v}" for k, v in PIN_GPIO_MAP.items()},
+            "sensor_bola": f"GPIO_{GPIO_SENSOR_BOLA}",
+            "salidas": {
+                "led_verde":    f"GPIO_{GPIO_LED_VERDE}",
+                "led_rojo":     f"GPIO_{GPIO_LED_ROJO}",
+                "led_amarillo": f"GPIO_{GPIO_LED_AMARILLO}",
+                "relay_alimentador": f"GPIO_{GPIO_RELAY_ALIMENTADOR}",
+                "servo_palanca": f"GPIO_{GPIO_SERVO_PALANCA} (PWM)",
+            }
         }

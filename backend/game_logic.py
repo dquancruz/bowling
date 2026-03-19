@@ -85,10 +85,11 @@ class Frame:
 
 
 class PlayerGame:
-    def __init__(self, name: str):
+    def __init__(self, name: str, frames: int = 10):
         self.name = name
+        self.total_frames = frames
         self.frames: List[Frame] = [
-            Frame(i + 1, is_last=(i == 9)) for i in range(10)
+            Frame(i + 1, is_last=(i == frames - 1)) for i in range(frames)
         ]
         self.current_frame_idx = 0
         # Pines parados actualmente (True = de pie, False = caído)
@@ -103,8 +104,9 @@ class PlayerGame:
         return None
 
     def is_finished(self) -> bool:
-        return (self.current_frame_idx >= 10 or
-                (self.current_frame_idx == 9 and self.frames[9].is_complete))
+        last = self.total_frames - 1
+        return (self.current_frame_idx >= self.total_frames or
+                (self.current_frame_idx == last and self.frames[last].is_complete))
 
     def knock_pin(self, pin_number: int) -> Optional[Dict]:
         """
@@ -250,7 +252,8 @@ class PlayerGame:
 class BowlingGame:
     def __init__(self, players: List[str], config: Dict):
         self.game_id = str(uuid.uuid4())
-        self.players = [PlayerGame(name) for name in players]
+        frames = config.get("frames_per_game", 10)
+        self.players = [PlayerGame(name, frames=frames) for name in players]
         self.config = config
         self.current_player_idx = 0
         self.status = "active"

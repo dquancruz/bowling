@@ -1,8 +1,7 @@
-fastapi==0.111.0
-uvicorn[standard]==0.29.0
-pydantic==2.7.1
-python-multipart==0.0.9
-websockets==12.0
-
-# Solo en Raspberry Pi real:
-# RPi.GPIO==0.7.1
+# ─── VERSIÓN LOCAL (Windows/Mac/Linux x64) ───
+# pip install -r requirements.txt
+fastapi
+uvicorn[standard]
+pydantic
+websockets
+python-multipart

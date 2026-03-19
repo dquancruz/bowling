@@ -1,6 +1,13 @@
 """
 Bowling Semiautomático - Backend Principal
 FastAPI + GPIO + WebSockets (sin base de datos)
+
+Secuencia completa:
+  1. Jugador tira → limit switches detectan pines caídos
+  2. RESETEAR PINES → confirma tiro, activa retorno de bola + LED verde
+  3. Sensor detecta bola → LED rojo ON, bola lista para tirar
+  4. Fin de frame → servo empuja pines + LED amarillo + timer 20s
+  5. Timer termina → LED amarillo OFF, listo para nuevo turno
 """
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
@@ -36,9 +43,12 @@ manager = ConnectionManager()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global gpio_handler
-    gpio_handler = GPIOHandler(pin_callback=on_pin_fallen)
+    gpio_handler = GPIOHandler(
+        pin_callback=on_pin_fallen,
+        ball_return_callback=on_ball_returned
+    )
     await gpio_handler.setup()
-    logger.info("✅ GPIO inicializado")
+    logger.info("✅ Sistema iniciado")
     yield
     if gpio_handler:
         gpio_handler.cleanup()
@@ -55,22 +65,56 @@ app.add_middleware(
 )
 
 
+# ─── CALLBACKS GPIO ──────────────────────────────────────────────────────────
+
 async def on_pin_fallen(pin_number: int):
-    """Callback cuando un limit switch detecta un pin caído"""
+    """Limit switch activado → registrar pin caído"""
     global current_game
     if not current_game:
-        logger.warning(f"Pin {pin_number} detectado pero no hay partida activa")
+        logger.warning(f"Pin {pin_number} caído pero no hay partida activa")
         return
 
     result = current_game.register_pin_fall(pin_number)
-    if result:
+    if not result:
+        return
+
+    await manager.broadcast({
+        "type": "pin_fallen",
+        "pin": pin_number,
+        "game_state": current_game.to_dict(),
+        **result
+    })
+
+    # Strike: commit automático → iniciar secuencia post-tiro
+    if result.get("auto_commit"):
+        await _post_roll(result)
+
+
+async def on_ball_returned():
+    """Sensor detectó que la bola llegó de vuelta"""
+    if gpio_handler:
+        await gpio_handler.bola_lista()
+    await manager.broadcast({"type": "ball_ready"})
+
+
+async def _post_roll(commit_result: dict):
+    """
+    Acciones después de confirmar un tiro:
+    - Siempre: retornar bola (relay + LED verde)
+    - Si frame completo: servo empuja pines + LED amarillo + timer 20s
+    """
+    if not gpio_handler:
+        return
+
+    await gpio_handler.secuencia_retorno_bola()
+    await manager.broadcast({"type": "ball_returning"})
+
+    if commit_result.get("frame_complete"):
+        await gpio_handler.secuencia_ordenar_pines()
         await manager.broadcast({
-            "type": "pin_fallen",
-            "pin": pin_number,
-            "game_state": current_game.to_dict(),
-            **result
+            "type": "ordering_pins",
+            "timer_seconds": 20
         })
-        logger.info(f"🎳 Pin {pin_number} caído")
 
 
 # ─── ENDPOINTS DE PARTIDA ────────────────────────────────────────────────────
@@ -80,6 +124,11 @@ async def new_game(request: NewGameRequest):
     global current_game
     current_game = BowlingGame(players=request.players, config=current_config)
     game_dict = current_game.to_dict()
+
+    # LED rojo ON → bola lista para el primer tiro
+    if gpio_handler:
+        gpio_handler.led_rojo(True)
+
     await manager.broadcast({"type": "game_started", "game_state": game_dict})
     logger.info(f"🎳 Nueva partida con {len(request.players)} jugadores")
     return {"status": "ok", "game": game_dict}
@@ -95,18 +144,24 @@ async def get_current_game():
 @app.post("/api/game/reset-pins")
 async def reset_pins():
     """
-    Confirma el tiro actual (con los pines acumulados) y resetea para el siguiente.
-    En el hardware real: se llama cuando el jugador levanta los pines.
+    Confirmar el tiro actual e iniciar secuencia post-tiro.
+    En hardware real: llamar cuando el jugador termina de tirar.
     """
     if not current_game:
         raise HTTPException(status_code=404, detail="No hay partida activa")
 
     result = current_game.commit_current_roll()
+
     await manager.broadcast({
         "type": "roll_committed",
         "game_state": current_game.to_dict(),
         **(result or {})
     })
+
+    # Iniciar secuencia post-tiro
+    if result and result.get("committed"):
+        await _post_roll(result)
+
     return {"status": "ok", "result": result}
 
 
@@ -122,8 +177,13 @@ async def end_game():
     global current_game
     if not current_game:
         raise HTTPException(status_code=404, detail="No hay partida activa")
+
     current_game.end_game()
     await manager.broadcast({"type": "game_ended", "game_state": current_game.to_dict()})
+
+    if gpio_handler:
+        gpio_handler.apagar_todo()
+
     current_game = None
     return {"status": "ok"}
 
@@ -141,6 +201,14 @@ async def update_config(config: GameConfig):
     current_config = config.dict()
     await manager.broadcast({"type": "config_updated", "config": current_config})
     return {"status": "ok", "config": current_config}
+
+
+@app.get("/api/gpio/map")
+async def get_gpio_map():
+    """Ver el mapa de pines GPIO"""
+    if gpio_handler:
+        return gpio_handler.get_pin_map()
+    return {}
 
 
 # ─── WEBSOCKET ───────────────────────────────────────────────────────────────
