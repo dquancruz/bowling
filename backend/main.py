@@ -94,33 +94,49 @@ async def on_pin_fallen(pin_number: int):
         **result
     })
 
-    # Chuza detectada automáticamente (10 pines de una)
+    # Chuza detectada → arrancar timer inmediatamente
     if result.get("auto_commit"):
-        is_strike_turn = True
-        logger.info("🎳 ¡CHUZA! Esperando retorno de bola para resetear")
+        logger.info("🎳 ¡CHUZA! Arrancando timer de 20s")
+        ball_return_count = 0
+        is_strike_turn = False
+        timer_active = True
+
+        await manager.broadcast({
+            "type": "pins_reset",
+            "game_state": current_game.to_dict()
+        })
+
+        if gpio_handler:
+            await gpio_handler.secuencia_ordenar_pines()
+            await manager.broadcast({
+                "type": "ordering_pins",
+                "timer_seconds": 20
+            })
 
 
 async def on_ball_returned():
     """
     Sensor detectó retorno de bola.
-    - 1er retorno sin chuza → nada, jugador tira 2do tiro
-    - 1er retorno con chuza → resetear pines y cambiar jugador
-    - 2do retorno → resetear pines y cambiar jugador
+    - 1er retorno → confirmar tiro, esperar 2do
+    - 2do retorno → confirmar tiro, resetear pines, timer 20s
     """
-    global current_game, ball_return_count, is_strike_turn, last_ball_time
+    global current_game, ball_return_count, is_strike_turn, last_ball_time, timer_active
 
-    # Ignorar si el timer de 20s está activo
+    # Ignorar si el timer está activo
     if timer_active:
-        logger.info("🎱 Retorno ignorado — timer activo, colocando pines")
+        logger.info("🎱 Retorno ignorado — timer activo")
         return
 
-    # Ignorar si el último retorno fue hace menos de 5 segundos
-    # (evita que los 2 sensores cuenten la misma bola dos veces)
+    # Debounce: ignorar si la misma bola fue detectada por el 2do sensor
     now = time.time()
-    elapsed = now - last_ball_time
-    if elapsed < 5.0:
-        logger.info(f"🎱 Retorno ignorado — misma bola detectada por 2do sensor ({elapsed:.1f}s)")
+    if last_ball_time > 0 and (now - last_ball_time) < 5.0:
+        logger.info(f"🎱 Retorno ignorado — 2do sensor ({now - last_ball_time:.1f}s)")
         return
+
+    last_ball_time = now
+    ball_return_count += 1
+    logger.info(f"🎱 Retorno válido #{ball_return_count}")
+
     if gpio_handler:
         await gpio_handler.bola_lista()
     await manager.broadcast({"type": "ball_ready"})
@@ -128,38 +144,33 @@ async def on_ball_returned():
     if not current_game:
         return
 
-    ball_return_count += 1
-    last_ball_time = now  # Actualizar timestamp para el siguiente retorno
-    logger.info(f"🎱 Retorno de bola #{ball_return_count} — chuza={is_strike_turn}")
+    # Confirmar tiro solo si hay pines pendientes
+    player = current_game.current_player
+    if player and player.pending_pins > 0:
+        result = current_game.commit_current_roll()
+        if result and result.get("committed"):
+            await manager.broadcast({
+                "type": "roll_committed",
+                "game_state": current_game.to_dict(),
+                **(result or {})
+            })
 
-    # Siempre confirmar el tiro actual al retornar la bola
-    result = current_game.commit_current_roll()
-    if result and result.get("committed"):
-        await manager.broadcast({
-            "type": "roll_committed",
-            "game_state": current_game.to_dict(),
-            **(result or {})
-        })
-
-    # Chuza o 2do retorno → resetear pines y cambiar jugador
-    debe_resetear = is_strike_turn or ball_return_count >= 2
-
-    if not debe_resetear:
-        logger.info(f"🎱 1er retorno sin chuza — esperando 2do tiro")
+    # 2do retorno → resetear y arrancar timer
+    if ball_return_count < 2:
+        logger.info("🎱 1er retorno — esperando 2do tiro")
         return
 
-    logger.info(f"🎱 Reseteando pines — {'chuza' if is_strike_turn else '2do retorno'}")
+    logger.info("🎱 2do retorno — reseteando pines y arrancando timer")
     ball_return_count = 0
     is_strike_turn = False
+    timer_active = True
 
     await manager.broadcast({
         "type": "pins_reset",
         "game_state": current_game.to_dict()
     })
 
-    # Iniciar timer 20s para ordenar pines
     if gpio_handler:
-        timer_active = True
         await gpio_handler.secuencia_ordenar_pines()
         await manager.broadcast({
             "type": "ordering_pins",
@@ -168,10 +179,13 @@ async def on_ball_returned():
 
 
 async def on_timer_done():
-    """Timer 20s terminó → habilitar pines de nuevo"""
-    global timer_active
+    """Timer 20s terminó → resetear todo y habilitar pines"""
+    global timer_active, ball_return_count, is_strike_turn, last_ball_time
     timer_active = False
-    logger.info("⏱️ Timer terminado — pines habilitados")
+    ball_return_count = 0
+    is_strike_turn = False
+    last_ball_time = 0.0
+    logger.info("⏱️ Timer terminado — pines y sensores habilitados")
     await manager.broadcast({"type": "timer_done"})
 
 
