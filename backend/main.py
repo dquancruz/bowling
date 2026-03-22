@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import json
 import logging
+import time
 from typing import Optional
 import os
 
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 current_game: Optional[BowlingGame] = None
 ball_return_count: int = 0   # Retornos de bola en el turno actual (max 2)
 is_strike_turn: bool = False  # Si el turno actual fue chuza
+last_ball_time: float = 0.0  # Timestamp del último retorno detectado
 current_config: dict = {
     "max_players": 6,
     "frames_per_game": 10,
@@ -101,7 +103,16 @@ async def on_ball_returned():
     - 1er retorno con chuza → resetear pines y cambiar jugador
     - 2do retorno → resetear pines y cambiar jugador
     """
-    global current_game, ball_return_count, is_strike_turn
+    global current_game, ball_return_count, is_strike_turn, last_ball_time
+
+    # Ignorar si el último retorno fue hace menos de 5 segundos
+    # (evita que los 2 sensores cuenten la misma bola dos veces)
+    now = time.time()
+    elapsed = now - last_ball_time
+    if elapsed < 5.0:
+        logger.info(f"🎱 Retorno ignorado — misma bola detectada por 2do sensor ({elapsed:.1f}s)")
+        return
+    last_ball_time = now
 
     if gpio_handler:
         await gpio_handler.bola_lista()
@@ -113,24 +124,25 @@ async def on_ball_returned():
     ball_return_count += 1
     logger.info(f"🎱 Retorno de bola #{ball_return_count} — chuza={is_strike_turn}")
 
+    # Siempre confirmar el tiro actual al retornar la bola
+    result = current_game.commit_current_roll()
+    if result and result.get("committed"):
+        await manager.broadcast({
+            "type": "roll_committed",
+            "game_state": current_game.to_dict(),
+            **(result or {})
+        })
+
+    # Chuza o 2do retorno → resetear pines y cambiar jugador
     debe_resetear = is_strike_turn or ball_return_count >= 2
 
     if not debe_resetear:
-        logger.info(f"🎱 1er retorno sin chuza — esperando 2do tiro (count={ball_return_count})")
+        logger.info(f"🎱 1er retorno sin chuza — esperando 2do tiro")
         return
 
-    # 2do retorno o chuza → resetear
     logger.info(f"🎱 Reseteando pines — {'chuza' if is_strike_turn else '2do retorno'}")
     ball_return_count = 0
     is_strike_turn = False
-
-    result = current_game.commit_current_roll()
-
-    await manager.broadcast({
-        "type": "roll_committed",
-        "game_state": current_game.to_dict(),
-        **(result or {})
-    })
 
     await manager.broadcast({
         "type": "pins_reset",
@@ -147,10 +159,7 @@ async def on_ball_returned():
 
 
 async def on_timer_done():
-    """Timer 20s terminó → listo para el siguiente turno"""
-    global ball_return_count, is_strike_turn
-    ball_return_count = 0
-    is_strike_turn = False
+    """Timer 20s terminó → solo notificar, los pines ya se resetearon antes"""
     logger.info("⏱️ Timer terminado — listo para jugar")
     await manager.broadcast({"type": "timer_done"})
 

@@ -171,10 +171,10 @@ class PlayerGame:
         if frame.is_complete:
             self.current_frame_idx += 1
             result["turn_changed"] = True
-
-        # Resetear pines para el siguiente tiro
-        # En frame 10 con strike/spare, resetear pines para el tiro bonus
-        self.pins_up = [True] * 10
+            # Frame completo → resetear pines
+            self.pins_up = [True] * 10
+        # Si el frame NO está completo (1er tiro normal), NO resetear pines
+        # Los pines que quedaron parados siguen para el 2do tiro
 
         return result
 
