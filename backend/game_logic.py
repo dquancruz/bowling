@@ -186,13 +186,15 @@ class PlayerGame:
 
         roll_idx = 0
         cumulative = 0
+        last_idx = self.total_frames - 1
 
         for i, frame in enumerate(self.frames):
             if not frame.rolls:
                 scores.append(None)
                 continue
 
-            if i == 9:
+            if i == last_idx:
+                # Último frame: suma directa sin bonus
                 frame_score = sum(frame.rolls)
                 cumulative += frame_score
                 scores.append(cumulative if frame.is_complete else None)
@@ -224,7 +226,7 @@ class PlayerGame:
                 roll_idx += len(frame.rolls)
 
         # Rellenar frames vacíos al final
-        while len(scores) < 10:
+        while len(scores) < self.total_frames:
             scores.append(None)
 
         return scores

@@ -34,7 +34,8 @@ logger = logging.getLogger(__name__)
 #  Bowling 8  → GPIO 4   → Pin físico 7
 #  Bowling 9  → GPIO 5   → Pin físico 29
 #  Bowling 10 → GPIO 6   → Pin físico 31
-#  Sensor bola→ GPIO 16  → Pin físico 36
+#  Sensor bola derecha  → GPIO 16  → Pin físico 36
+#  Sensor bola izquierda → GPIO 13  → Pin físico 33
 #
 #  Cableado: cada switch entre GPIO y GND (pull-up interno activado)
 
@@ -51,7 +52,8 @@ PIN_GPIO_MAP = {
     10: 6,
 }
 
-GPIO_SENSOR_BOLA  = 16   # Sensor retorno de bola → Pin físico 36
+GPIO_SENSOR_BOLA   = 16  # Sensor canaleta derecha → Pin físico 36
+GPIO_SENSOR_BOLA_2 = 13  # Sensor canaleta izquierda → Pin físico 33
 
 # ─── PINES DE SALIDA ─────────────────────────────────────────────────────────
 #
@@ -89,13 +91,31 @@ def angulo_a_duty(angulo: int) -> float:
     """Convertir ángulo (0-180°) a duty cycle PWM (2.5% - 12.5%)"""
     return 2.5 + (angulo / 180.0) * 10.0
 
-IS_RASPBERRY_PI = os.path.exists("/sys/bus/platform/drivers/raspberrypi-firmware")
+def _detect_raspberry_pi() -> bool:
+    # Múltiples rutas para detectar Pi en distintas versiones de Pi OS
+    checks = [
+        "/sys/bus/platform/drivers/raspberrypi-firmware",
+        "/proc/device-tree/model",
+        "/sys/firmware/devicetree/base/model",
+    ]
+    for path in checks:
+        if os.path.exists(path):
+            return True
+    try:
+        with open("/proc/cpuinfo", "r") as f:
+            return "raspberry pi" in f.read().lower()
+    except Exception:
+        pass
+    return False
+
+IS_RASPBERRY_PI = _detect_raspberry_pi()
 
 
 class GPIOHandler:
-    def __init__(self, pin_callback: Callable, ball_return_callback: Callable):
+    def __init__(self, pin_callback: Callable, ball_return_callback: Callable, timer_done_callback: Callable = None):
         self.pin_callback = pin_callback
         self.ball_return_callback = ball_return_callback
+        self._timer_done_callback = timer_done_callback
         self.gpio = None
         self.servo_pwm = None          # Instancia PWM del servo
         self.loop: Optional[asyncio.AbstractEventLoop] = None
@@ -126,17 +146,23 @@ class GPIOHandler:
                 )
                 logger.info(f"   Pin bowling {pin_num} → GPIO {gpio_pin}")
 
-            # ── Entrada: sensor retorno de bola ──
-            self.gpio.setup(GPIO_SENSOR_BOLA, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-            self.gpio.add_event_detect(
-                GPIO_SENSOR_BOLA, GPIO.FALLING,
-                callback=self._on_ball_returned,
-                bouncetime=500
-            )
-
-            # ── Salidas: LEDs ──
-            for pin in [GPIO_LED_VERDE, GPIO_LED_ROJO, GPIO_LED_AMARILLO]:
-                self.gpio.setup(pin, GPIO.OUT, initial=GPIO.LOW)
+            # ── Entradas: sensores retorno de bola (canaleta izq y der) ──
+            for sensor_pin in [GPIO_SENSOR_BOLA, GPIO_SENSOR_BOLA_2]:
+                try:
+                    self.gpio.setup(sensor_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+                    # Remover event anterior si existe
+                    try:
+                        self.gpio.remove_event_detect(sensor_pin)
+                    except Exception:
+                        pass
+                    self.gpio.add_event_detect(
+                        sensor_pin, GPIO.FALLING,
+                        callback=self._on_ball_returned,
+                        bouncetime=200
+                    )
+                    logger.info(f"   ✅ Sensor bola registrado → GPIO {sensor_pin}")
+                except Exception as e:
+                    logger.error(f"   ❌ Error registrando sensor GPIO {sensor_pin}: {e}")
 
             # ── Salida: Relay alimentador (HIGH = inactivo) ──
             self.gpio.setup(GPIO_RELAY_ALIMENTADOR, GPIO.OUT, initial=GPIO.HIGH)
@@ -168,7 +194,7 @@ class GPIOHandler:
         return callback
 
     def _on_ball_returned(self, channel):
-        logger.info("🎱 Sensor: bola retornada")
+        logger.info(f"🎱 Sensor bola activado: GPIO {channel}")
         if self.loop and self.loop.is_running():
             asyncio.run_coroutine_threadsafe(
                 self.ball_return_callback(), self.loop
@@ -196,16 +222,13 @@ class GPIOHandler:
 
     # LEDs
     def led_verde(self, state: bool):
-        self._set_led(GPIO_LED_VERDE, state)
-        logger.info(f"💚 LED verde: {'ON' if state else 'OFF'}")
+        pass  # LEDs desconectados
 
     def led_rojo(self, state: bool):
-        self._set_led(GPIO_LED_ROJO, state)
-        logger.info(f"🔴 LED rojo: {'ON' if state else 'OFF'}")
+        pass  # LEDs desconectados
 
     def led_amarillo(self, state: bool):
-        self._set_led(GPIO_LED_AMARILLO, state)
-        logger.info(f"🟡 LED amarillo: {'ON' if state else 'OFF'}")
+        pass  # LEDs desconectados
 
     # Relay alimentador
     def alimentador(self, active: bool):
@@ -257,11 +280,13 @@ class GPIOHandler:
         self._timer_task = asyncio.create_task(self._timer_pines())
 
     async def _timer_pines(self):
-        """Timer 20s → apaga LED amarillo"""
+        """Timer 20s → apaga LED amarillo y llama callback de reset"""
         try:
             await asyncio.sleep(TIMER_PINES_S)
             self.led_amarillo(False)
-            logger.info("✅ Timer terminado — pines listos")
+            logger.info("✅ Timer terminado — reseteando pines y avanzando turno")
+            if self._timer_done_callback:
+                await self._timer_done_callback()
         except asyncio.CancelledError:
             self.led_amarillo(False)
 
@@ -296,7 +321,8 @@ class GPIOHandler:
     def get_pin_map(self) -> dict:
         return {
             "entradas": {f"pin_bowling_{k}": f"GPIO_{v}" for k, v in PIN_GPIO_MAP.items()},
-            "sensor_bola": f"GPIO_{GPIO_SENSOR_BOLA}",
+            "sensor_bola_derecha":   f"GPIO_{GPIO_SENSOR_BOLA}  (Pin físico 36)",
+            "sensor_bola_izquierda": f"GPIO_{GPIO_SENSOR_BOLA_2} (Pin físico 33)",
             "salidas": {
                 "led_verde":    f"GPIO_{GPIO_LED_VERDE}",
                 "led_rojo":     f"GPIO_{GPIO_LED_ROJO}",
