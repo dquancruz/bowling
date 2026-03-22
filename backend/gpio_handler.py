@@ -140,7 +140,7 @@ class GPIOHandler:
             for pin_num, gpio_pin in PIN_GPIO_MAP.items():
                 self.gpio.setup(gpio_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
                 self.gpio.add_event_detect(
-                    gpio_pin, GPIO.FALLING,
+                    gpio_pin, GPIO.RISING,
                     callback=self._make_pin_callback(pin_num),
                     bouncetime=DEBOUNCE_MS
                 )

@@ -32,6 +32,7 @@ current_game: Optional[BowlingGame] = None
 ball_return_count: int = 0   # Retornos de bola en el turno actual (max 2)
 is_strike_turn: bool = False  # Si el turno actual fue chuza
 last_ball_time: float = 0.0  # Timestamp del último retorno detectado
+timer_active: bool = False    # True mientras el timer de 20s está corriendo
 current_config: dict = {
     "max_players": 6,
     "frames_per_game": 10,
@@ -74,9 +75,12 @@ app.add_middleware(
 
 async def on_pin_fallen(pin_number: int):
     """Limit switch activado → acumular pin caído"""
-    global current_game, is_strike_turn
+    global current_game, is_strike_turn, timer_active
     if not current_game:
         logger.warning(f"Pin {pin_number} caído pero no hay partida activa")
+        return
+    if timer_active:
+        logger.info(f"🚫 Pin {pin_number} ignorado — timer activo")
         return
 
     result = current_game.register_pin_fall(pin_number)
@@ -105,6 +109,11 @@ async def on_ball_returned():
     """
     global current_game, ball_return_count, is_strike_turn, last_ball_time
 
+    # Ignorar si el timer de 20s está activo
+    if timer_active:
+        logger.info("🎱 Retorno ignorado — timer activo, colocando pines")
+        return
+
     # Ignorar si el último retorno fue hace menos de 5 segundos
     # (evita que los 2 sensores cuenten la misma bola dos veces)
     now = time.time()
@@ -112,8 +121,6 @@ async def on_ball_returned():
     if elapsed < 5.0:
         logger.info(f"🎱 Retorno ignorado — misma bola detectada por 2do sensor ({elapsed:.1f}s)")
         return
-    last_ball_time = now
-
     if gpio_handler:
         await gpio_handler.bola_lista()
     await manager.broadcast({"type": "ball_ready"})
@@ -122,6 +129,7 @@ async def on_ball_returned():
         return
 
     ball_return_count += 1
+    last_ball_time = now  # Actualizar timestamp para el siguiente retorno
     logger.info(f"🎱 Retorno de bola #{ball_return_count} — chuza={is_strike_turn}")
 
     # Siempre confirmar el tiro actual al retornar la bola
@@ -151,6 +159,7 @@ async def on_ball_returned():
 
     # Iniciar timer 20s para ordenar pines
     if gpio_handler:
+        timer_active = True
         await gpio_handler.secuencia_ordenar_pines()
         await manager.broadcast({
             "type": "ordering_pins",
@@ -159,8 +168,10 @@ async def on_ball_returned():
 
 
 async def on_timer_done():
-    """Timer 20s terminó → solo notificar, los pines ya se resetearon antes"""
-    logger.info("⏱️ Timer terminado — listo para jugar")
+    """Timer 20s terminó → habilitar pines de nuevo"""
+    global timer_active
+    timer_active = False
+    logger.info("⏱️ Timer terminado — pines habilitados")
     await manager.broadcast({"type": "timer_done"})
 
 
@@ -168,9 +179,11 @@ async def on_timer_done():
 
 @app.post("/api/game/new")
 async def new_game(request: NewGameRequest):
-    global current_game, ball_return_count, is_strike_turn
+    global current_game, ball_return_count, is_strike_turn, last_ball_time, timer_active
     ball_return_count = 0
     is_strike_turn = False
+    last_ball_time = 0.0
+    timer_active = False
     current_game = BowlingGame(players=request.players, config=current_config)
     game_dict = current_game.to_dict()
 
