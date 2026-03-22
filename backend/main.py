@@ -144,16 +144,22 @@ async def on_ball_returned():
     if not current_game:
         return
 
-    # Confirmar tiro solo si hay pines pendientes
+    # Confirmar tiro — si la bola regresó, el jugador tiró (aunque sean 0 pines)
+    # Excepción: si es el primer retorno después del timer (jugador nuevo sin tiros)
+    # lo detectamos chequeando que haya al menos 1 tiro en el frame O pending_pins > 0
     player = current_game.current_player
-    if player and player.pending_pins > 0:
-        result = current_game.commit_current_roll()
-        if result and result.get("committed"):
-            await manager.broadcast({
-                "type": "roll_committed",
-                "game_state": current_game.to_dict(),
-                **(result or {})
-            })
+    if player and player.current_frame:
+        tiros_en_frame = len(player.current_frame.rolls)
+        # Confirmar si: botó algo, o ya tiene un 1er tiro (este es el 2do retorno)
+        if player.pending_pins > 0 or tiros_en_frame == 1 or (tiros_en_frame == 0 and ball_return_count >= 1):
+            result = current_game.commit_current_roll()
+            if result and result.get("committed"):
+                await manager.broadcast({
+                    "type": "roll_committed",
+                    "game_state": current_game.to_dict(),
+                    **(result or {})
+                })
+
 
     # 2do retorno → resetear y arrancar timer
     if ball_return_count < 2:
