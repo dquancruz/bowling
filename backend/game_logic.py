@@ -301,11 +301,7 @@ class BowlingGame:
             return None
 
         player = self.current_player
-        if player.pending_pins == 0:
-            # No hay nada pendiente, solo resetear visualmente
-            player.pins_up = [True] * 10
-            return {"committed": False, "message": "Sin pines pendientes"}
-
+        # Siempre confirmar el tiro, aunque sean 0 pines (tiro en falso)
         result = player.commit_roll()
         result["player"] = player.name
 
