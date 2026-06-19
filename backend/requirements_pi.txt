@@ -1,8 +1,9 @@
 # ─── VERSIÓN RASPBERRY PI (ARM) ───
-# pip install -r requirements-pi.txt
+# pip install -r requirements_pi.txt
 fastapi
 uvicorn[standard]
 pydantic
 websockets
 python-multipart
 RPi.GPIO
+pigpio

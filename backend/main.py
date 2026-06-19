@@ -107,6 +107,7 @@ async def on_pin_fallen(pin_number: int):
         })
 
         if gpio_handler:
+            await gpio_handler.secuencia_abrir_u()
             await gpio_handler.secuencia_ordenar_pines()
             await manager.broadcast({
                 "type": "ordering_pins",
@@ -177,6 +178,7 @@ async def on_ball_returned():
     })
 
     if gpio_handler:
+        await gpio_handler.secuencia_abrir_u()
         await gpio_handler.secuencia_ordenar_pines()
         await manager.broadcast({
             "type": "ordering_pins",
