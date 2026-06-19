@@ -14,6 +14,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import asyncio
 import json
 import logging
 import time
@@ -276,7 +277,7 @@ async def end_game():
 async def limpiar_servo():
     """Activa la secuencia del servo para limpiar pinos (botón manual en UI)"""
     if gpio_handler:
-        asyncio.create_task(gpio_handler.limpiar_pinos())
+        await gpio_handler.limpiar_pinos()
     return {"status": "ok"}
 
 
