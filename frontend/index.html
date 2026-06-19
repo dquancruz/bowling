@@ -300,6 +300,12 @@ input:focus, select:focus { border-color: var(--accent); }
       </div>
 
       <div class="control-card">
+        <h3>Limpieza de Pinos</h3>
+        <p style="font-size:0.8rem;color:var(--muted);margin-bottom:20px;font-family:'Share Tech Mono',monospace;">Activa el servo para limpiar los pinos del carril</p>
+        <button class="btn btn-primary" id="btnLimpiar" onclick="limpiarPinos()">🔧 LIMPIAR PINOS</button>
+      </div>
+
+      <div class="control-card">
         <h3>Simular / Corregir Pin</h3>
         <p style="font-size:0.8rem;color:var(--muted);margin-bottom:14px;font-family:'Share Tech Mono',monospace;">Para testing o corrección manual</p>
         <div class="pin-buttons">
@@ -633,6 +639,23 @@ async function manualPin(n) {
 
 async function resetPins() {
   await fetch(`${API}/game/reset-pins`, { method: 'POST' });
+}
+
+async function limpiarPinos() {
+  const btn = document.getElementById('btnLimpiar');
+  btn.disabled = true;
+  btn.textContent = '⏳ LIMPIANDO...';
+  try {
+    const res = await fetch(`${API}/servo/limpiar`, { method: 'POST' });
+    if (res.ok) showToast('🔧 LIMPIANDO PINOS...', '');
+    else showToast('ERROR AL ACTIVAR SERVO', '');
+  } catch(e) {
+    showToast('ERROR DE CONEXIÓN', '');
+  }
+  setTimeout(() => {
+    btn.disabled = false;
+    btn.textContent = '🔧 LIMPIAR PINOS';
+  }, 3500);
 }
 
 async function endGame() {

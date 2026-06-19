@@ -107,7 +107,6 @@ async def on_pin_fallen(pin_number: int):
         })
 
         if gpio_handler:
-            await gpio_handler.secuencia_abrir_u()
             await gpio_handler.secuencia_ordenar_pines()
             await manager.broadcast({
                 "type": "ordering_pins",
@@ -178,7 +177,6 @@ async def on_ball_returned():
     })
 
     if gpio_handler:
-        await gpio_handler.secuencia_abrir_u()
         await gpio_handler.secuencia_ordenar_pines()
         await manager.broadcast({
             "type": "ordering_pins",
@@ -273,6 +271,14 @@ async def end_game():
 
 
 # ─── CONFIGURACIÓN ───────────────────────────────────────────────────────────
+
+@app.post("/api/servo/limpiar")
+async def limpiar_servo():
+    """Activa la secuencia del servo para limpiar pinos (botón manual en UI)"""
+    if gpio_handler:
+        asyncio.create_task(gpio_handler.limpiar_pinos())
+    return {"status": "ok"}
+
 
 @app.get("/api/config")
 async def get_config():

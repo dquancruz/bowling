@@ -10,9 +10,7 @@ SALIDAS:
   - LED rojo     → bola llegó, lista para tirar
   - LED amarillo → timer 20s, colocar pines manualmente
   - Relay        → motor alimentador de bolas
-  - Servomotor   → palanca que empuja pines (0° reposo → 90° empuja → 0° vuelve)
-  - Servo U izq  → abre en U para limpiar carril (GPIO 12, 0° cerrado → 90° abierto)
-  - Servo U der  → abre en U para limpiar carril (GPIO 13, 0° cerrado → 90° abierto)
+  - Servo palanca → limpieza manual de pinos (GPIO 13, botón en UI)
 """
 
 import asyncio
@@ -65,43 +63,23 @@ GPIO_SENSOR_BOLA_2 = 14  # Sensor canaleta izquierda → Pin físico 8
 #  LED rojo           → GPIO 26   → Pin físico 37   (bola lista)
 #  LED amarillo       → GPIO 20   → Pin físico 38   (timer 20s)
 #  Relay alimentador  → GPIO 21   → Pin físico 40   (motor retorno bola)
-#  Servo U izquierdo  → GPIO 12   → Pin físico 32   (PWM 50Hz)
-#  Servo U derecho    → GPIO 13   → Pin físico 33   (PWM 50Hz)
+#  Servo palanca      → GPIO 13   → Pin físico 33   (PWM 50Hz, limpieza manual)
 #
 #  LEDs: resistencia 220Ω entre GPIO y GND
 #  Relay: activo en LOW
-#  Servos U: VCC → 5V externo, GND común, señal → GPIO 12 / GPIO 13
+#  Servo: VCC → 5V externo, GND común, señal → GPIO 13
 
 GPIO_LED_VERDE    = 19   # Bola en camino de regreso   → Pin físico 35
 GPIO_LED_ROJO     = 26   # Bola llegó, listo para tirar → Pin físico 37
 GPIO_LED_AMARILLO = 20   # Timer 20s - colocar pines    → Pin físico 38
 
 GPIO_RELAY_ALIMENTADOR = 21  # Relay motor retorno de bola → Pin físico 40
-GPIO_SERVO_U_IZQ       = 12  # Servo U izquierdo (PWM)     → Pin físico 32
-GPIO_SERVO_U_DER       = 13  # Servo U derecho   (PWM)     → Pin físico 33
+GPIO_SERVO_PALANCA     = 13  # Servo limpieza de pinos (PWM) → Pin físico 33
 
 # ─── CONFIGURACIÓN ───────────────────────────────────────────────────────────
 
 DEBOUNCE_MS   = 300
 TIMER_PINES_S = 20
-
-# Servo posicional S3003 (GPIO 13) — control por ángulo
-# 500µs = 0° | 1500µs = 90° | 2500µs = 180°
-SERVO_REPOSO = 0    # grados → posición inicial/reposo
-SERVO_EMPUJA = 90   # grados → posición de empuje (90° desde cero)
-SERVO_TIEMPO = 1.0  # segundos en posición de empuje antes de volver
-
-SERVO_U_REPOSO  = 0    # grados → posición cerrada
-SERVO_U_ABIERTO = 90   # grados → posición abierta en U
-SERVO_U_TIEMPO  = 2.0  # segundos abierto antes de cerrar
-
-def angulo_a_duty(angulo: int) -> float:
-    """Convertir ángulo (0-180°) a duty cycle PWM (2.5% - 12.5%)"""
-    return 2.5 + (angulo / 180.0) * 10.0
-
-def angulo_a_pulsewidth(angulo: int) -> int:
-    """Convertir ángulo (0-180°) a pulsewidth en microsegundos (500-2500µs)"""
-    return int(500 + (angulo / 180.0) * 2000)
 
 def _detect_raspberry_pi() -> bool:
     # Múltiples rutas para detectar Pi en distintas versiones de Pi OS
@@ -129,7 +107,7 @@ class GPIOHandler:
         self.ball_return_callback = ball_return_callback
         self._timer_done_callback = timer_done_callback
         self.gpio = None
-        self.pi = None  # pigpio.pi() para control hardware de servos
+        self.pi = None  # pigpio.pi() para control hardware del servo
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self._simulation_mode = not IS_RASPBERRY_PI
         self._timer_task: Optional[asyncio.Task] = None
@@ -162,7 +140,6 @@ class GPIOHandler:
             for sensor_pin in [GPIO_SENSOR_BOLA, GPIO_SENSOR_BOLA_2]:
                 try:
                     self.gpio.setup(sensor_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-                    # Remover event anterior si existe
                     try:
                         self.gpio.remove_event_detect(sensor_pin)
                     except Exception:
@@ -179,19 +156,16 @@ class GPIOHandler:
             # ── Salida: Relay alimentador (HIGH = inactivo) ──
             self.gpio.setup(GPIO_RELAY_ALIMENTADOR, GPIO.OUT, initial=GPIO.HIGH)
 
-            # ── Salida: Servos U (pigpio hardware PWM) ──
-            # pigpio controla GPIO 12 y 13 directamente; no configurar con RPi.GPIO
+            # ── Servo palanca (pigpio hardware PWM) — inicia desactivado ──
             try:
                 import pigpio
                 self.pi = pigpio.pi()
                 if not self.pi.connected:
                     raise RuntimeError("pigpiod no está corriendo (sudo systemctl start pigpiod)")
-                self.pi.set_servo_pulsewidth(GPIO_SERVO_U_IZQ, 0)
-                self.pi.set_servo_pulsewidth(GPIO_SERVO_U_DER, 0)
-                logger.info(f"   Servo U izq → GPIO {GPIO_SERVO_U_IZQ} (pigpio, desactivado en reposo)")
-                logger.info(f"   Servo palanca → GPIO {GPIO_SERVO_U_DER} (pigpio, desactivado en reposo)")
+                self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA, 0)  # desactivado al arrancar
+                logger.info(f"   Servo palanca → GPIO {GPIO_SERVO_PALANCA} (pigpio, desactivado en reposo)")
             except Exception as e:
-                logger.error(f"❌ Error inicializando servos pigpio: {e}")
+                logger.error(f"❌ Error inicializando servo pigpio: {e}")
                 self.pi = None
 
             logger.info("✅ GPIO configurado correctamente")
@@ -232,25 +206,6 @@ class GPIOHandler:
         if self.gpio and not self._simulation_mode:
             self.gpio.output(pin, self.gpio.LOW if active else self.gpio.HIGH)
 
-    def _set_servo(self, angulo: int):
-        """Mover servo palanca (GPIO 13) a un ángulo"""
-        if self.pi and not self._simulation_mode:
-            pw = angulo_a_pulsewidth(angulo)
-            self.pi.set_servo_pulsewidth(GPIO_SERVO_U_DER, pw)
-            logger.info(f"⚙️  Servo palanca → {angulo}° ({pw}µs)")
-        else:
-            logger.info(f"🎮 [SIM] Servo palanca → {angulo}°")
-
-    def _set_servo_u(self, angulo: int):
-        """Mover ambos servos U a un ángulo"""
-        if self.pi and not self._simulation_mode:
-            pw = angulo_a_pulsewidth(angulo)
-            self.pi.set_servo_pulsewidth(GPIO_SERVO_U_IZQ, pw)
-            self.pi.set_servo_pulsewidth(GPIO_SERVO_U_DER, pw)
-            logger.info(f"⚙️  Servo U → {angulo}° ({pw}µs)")
-        else:
-            logger.info(f"🎮 [SIM] Servo U → {angulo}°")
-
     # LEDs
     def led_verde(self, state: bool):
         pass  # LEDs desconectados
@@ -269,10 +224,7 @@ class GPIOHandler:
     # ─── SECUENCIAS ──────────────────────────────────────────────────────────
 
     async def secuencia_retorno_bola(self):
-        """
-        Activar alimentador + LED verde (bola en camino).
-        El sensor de bola apaga esto cuando llega.
-        """
+        """Activar alimentador + LED verde (bola en camino)."""
         logger.info("🎱 Iniciando retorno de bola")
         self.led_rojo(False)
         self.led_verde(True)
@@ -285,34 +237,31 @@ class GPIOHandler:
         self.led_rojo(True)
         logger.info("✅ Bola lista para tirar")
 
-    async def secuencia_abrir_u(self):
-        """Abrir los dos servos U para limpiar el carril, luego cerrar"""
-        logger.info("🔧 Abriendo servos U")
-        self._set_servo_u(SERVO_U_ABIERTO)
-        await asyncio.sleep(SERVO_U_TIEMPO)
-        self._set_servo_u(SERVO_U_REPOSO)
-        await asyncio.sleep(0.5)
+    async def limpiar_pinos(self):
+        """
+        Secuencia manual de limpieza activada desde el botón en la UI.
+        Replica el código independiente que funciona: 90° → 180° → 90° → apagar.
+        """
+        logger.info("🔧 Limpieza manual de pinos — iniciando servo")
         if self.pi and not self._simulation_mode:
-            self.pi.set_servo_pulsewidth(GPIO_SERVO_U_IZQ, 0)
-            self.pi.set_servo_pulsewidth(GPIO_SERVO_U_DER, 0)
-        logger.info("✅ Servos U cerrados")
+            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA, 1500)  # 90°
+            await asyncio.sleep(1)
+            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA, 2500)  # 180°
+            await asyncio.sleep(1)
+            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA, 1500)  # 90°
+            await asyncio.sleep(1)
+            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA, 0)     # apagar señal
+            logger.info("✅ Limpieza completada")
+        else:
+            logger.info("🎮 [SIM] Servo: 90° → 180° → 90° → off")
 
     async def secuencia_ordenar_pines(self):
         """
         Después del 2do tiro (o strike):
-        1. Servo empuja pines caídos y regresa
-        2. LED amarillo ON + timer 20s
-        3. Timer termina → LED amarillo OFF
+        1. LED amarillo ON + timer 20s
+        2. Timer termina → LED amarillo OFF
         """
         logger.info("🔧 Iniciando secuencia ordenado de pines")
-
-        self._set_servo(SERVO_EMPUJA)
-        await asyncio.sleep(SERVO_TIEMPO)
-        self._set_servo(SERVO_REPOSO)
-        await asyncio.sleep(0.5)
-        if self.pi and not self._simulation_mode:
-            self.pi.set_servo_pulsewidth(GPIO_SERVO_U_DER, 0)
-
         self.led_amarillo(True)
         logger.info(f"⏱️  Timer {TIMER_PINES_S}s — colocar pines manualmente")
 
@@ -339,16 +288,14 @@ class GPIOHandler:
         self.led_amarillo(False)
         self.alimentador(False)
         if self.pi:
-            self.pi.set_servo_pulsewidth(GPIO_SERVO_U_IZQ, 0)
-            self.pi.set_servo_pulsewidth(GPIO_SERVO_U_DER, 0)
-            logger.info("⚙️  Servos apagados")
+            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA, 0)
+            logger.info("⚙️  Servo apagado")
 
     def cleanup(self):
         self.apagar_todo()
         if self.pi:
             try:
-                self.pi.set_servo_pulsewidth(GPIO_SERVO_U_IZQ, 0)
-                self.pi.set_servo_pulsewidth(GPIO_SERVO_U_DER, 0)
+                self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA, 0)
                 self.pi.stop()
                 logger.info("pigpio detenido")
             except Exception as e:
@@ -374,7 +321,6 @@ class GPIOHandler:
                 "led_rojo":     f"GPIO_{GPIO_LED_ROJO}",
                 "led_amarillo": f"GPIO_{GPIO_LED_AMARILLO}",
                 "relay_alimentador": f"GPIO_{GPIO_RELAY_ALIMENTADOR}",
-                "servo_u_izquierdo": f"GPIO_{GPIO_SERVO_U_IZQ} (PWM, Pin físico 32)",
-                "servo_u_derecho":   f"GPIO_{GPIO_SERVO_U_DER} (PWM, Pin físico 33)",
+                "servo_palanca": f"GPIO_{GPIO_SERVO_PALANCA} (PWM, Pin físico 33)",
             }
         }
