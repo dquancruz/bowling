@@ -186,10 +186,10 @@ class GPIOHandler:
                 self.pi = pigpio.pi()
                 if not self.pi.connected:
                     raise RuntimeError("pigpiod no está corriendo (sudo systemctl start pigpiod)")
-                self.pi.set_servo_pulsewidth(GPIO_SERVO_U_IZQ, angulo_a_pulsewidth(SERVO_U_REPOSO))
-                self.pi.set_servo_pulsewidth(GPIO_SERVO_U_DER, angulo_a_pulsewidth(SERVO_REPOSO))
-                logger.info(f"   Servo U izq → GPIO {GPIO_SERVO_U_IZQ} (pigpio, reposo {SERVO_U_REPOSO}°)")
-                logger.info(f"   Servo palanca → GPIO {GPIO_SERVO_U_DER} (pigpio, reposo {SERVO_REPOSO}°)")
+                self.pi.set_servo_pulsewidth(GPIO_SERVO_U_IZQ, 0)
+                self.pi.set_servo_pulsewidth(GPIO_SERVO_U_DER, 0)
+                logger.info(f"   Servo U izq → GPIO {GPIO_SERVO_U_IZQ} (pigpio, desactivado en reposo)")
+                logger.info(f"   Servo palanca → GPIO {GPIO_SERVO_U_DER} (pigpio, desactivado en reposo)")
             except Exception as e:
                 logger.error(f"❌ Error inicializando servos pigpio: {e}")
                 self.pi = None
