@@ -75,6 +75,7 @@ GPIO_LED_AMARILLO = 20   # Timer 20s - colocar pines    → Pin físico 38
 
 GPIO_RELAY_ALIMENTADOR = 21  # Relay motor retorno de bola → Pin físico 40
 GPIO_SERVO_PALANCA     = 13  # Servo limpieza de pinos (PWM) → Pin físico 33
+GPIO_SERVO_PALANCA_2   = 12  # Servo limpieza de pinos 2 (PWM) → Pin físico 32
 
 # ─── CONFIGURACIÓN ───────────────────────────────────────────────────────────
 
@@ -162,8 +163,10 @@ class GPIOHandler:
                 self.pi = pigpio.pi()
                 if not self.pi.connected:
                     raise RuntimeError("pigpiod no está corriendo (sudo systemctl start pigpiod)")
-                self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA, 0)  # desactivado al arrancar
-                logger.info(f"   Servo palanca → GPIO {GPIO_SERVO_PALANCA} (pigpio, desactivado en reposo)")
+                self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA, 0)    # desactivado al arrancar
+                self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA_2, 0)  # desactivado al arrancar
+                logger.info(f"   Servo palanca 1 → GPIO {GPIO_SERVO_PALANCA} (pigpio, desactivado en reposo)")
+                logger.info(f"   Servo palanca 2 → GPIO {GPIO_SERVO_PALANCA_2} (pigpio, desactivado en reposo)")
             except Exception as e:
                 logger.error(f"❌ Error inicializando servo pigpio: {e}")
                 self.pi = None
@@ -240,20 +243,24 @@ class GPIOHandler:
     async def limpiar_pinos(self):
         """
         Secuencia manual de limpieza activada desde el botón en la UI.
-        Replica el código independiente que funciona: 90° → 180° → 90° → apagar.
+        Replica el código independiente que funciona: 137.5° → 15° → 137.5° → apagar.
         """
-        logger.info("🔧 Limpieza manual de pinos — iniciando servo")
+        logger.info("🔧 Limpieza manual de pinos — iniciando servos")
         if self.pi and not self._simulation_mode:
-            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA, 1500)  # 90°
+            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA,   2028)  # 137.5°
+            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA_2, 667)   # 15°
             await asyncio.sleep(1)
-            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA, 2500)  # 180°
+            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA,   667)   # 15°
+            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA_2, 2028)  # 137.5°
             await asyncio.sleep(1)
-            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA, 1500)  # 90°
+            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA,   2028)  # 137.5°
+            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA_2, 667)   # 15°
             await asyncio.sleep(1)
-            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA, 0)     # apagar señal
+            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA,   0)     # apagar señal
+            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA_2, 0)     # apagar señal
             logger.info("✅ Limpieza completada")
         else:
-            logger.info("🎮 [SIM] Servo: 90° → 180° → 90° → off")
+            logger.info("🎮 [SIM] Servo1: 137.5° → 15° → 137.5° | Servo2: 15° → 137.5° → 15° → off")
 
     async def secuencia_ordenar_pines(self):
         """
@@ -289,13 +296,15 @@ class GPIOHandler:
         self.alimentador(False)
         if self.pi:
             self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA, 0)
-            logger.info("⚙️  Servo apagado")
+            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA_2, 0)
+            logger.info("⚙️  Servos apagados")
 
     def cleanup(self):
         self.apagar_todo()
         if self.pi:
             try:
                 self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA, 0)
+                self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA_2, 0)
                 self.pi.stop()
                 logger.info("pigpio detenido")
             except Exception as e:

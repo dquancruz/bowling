@@ -111,7 +111,7 @@ Sensor detecta retorno #2 → confirma tiro
     ↓
 Secuencia de reset:
     ⚙️  Servos U: 10° → 170° (abre, barre pines) → 10° (cierra)
-    ⚙️  Servo palanca (GPIO 12): 90° → 180° → 90° (empuja pines caídos)
+    ⚙️  Servo palanca (GPIO 12): 137.5° → 15° → 137.5° (empuja pines caídos)
     🟡 LED amarillo ON
     ⏱️  Timer 20 segundos (colocar pines manualmente)
     🟡 LED amarillo OFF → listo para nuevo turno
@@ -281,8 +281,8 @@ SERVO_U_REPOSO  = 10      # grados → cerrado (611 µs)
 SERVO_U_ABIERTO = 170     # grados → abierto en U (2389 µs)
 SERVO_U_TIEMPO  = 2.0     # segundos abierto antes de cerrar
 
-SERVO_REPOSO = 90         # grados → palanca en reposo (1500 µs)
-SERVO_EMPUJA = 180        # grados → palanca empujando (2500 µs)
+SERVO_REPOSO = 137.5      # grados → palanca en reposo (2028 µs)
+SERVO_EMPUJA = 15         # grados → palanca empujando (667 µs)
 SERVO_TIEMPO = 1.5        # segundos empujando antes de volver
 
 # ── Timer de reset ──

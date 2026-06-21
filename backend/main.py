@@ -34,6 +34,8 @@ ball_return_count: int = 0   # Retornos de bola en el turno actual (max 2)
 is_strike_turn: bool = False  # Si el turno actual fue chuza
 last_ball_time: float = 0.0  # Timestamp del último retorno detectado
 timer_active: bool = False    # True mientras el timer de 20s está corriendo
+_grace_commit_task: Optional[asyncio.Task] = None  # Tarea de commit diferido (canaleta)
+GRACE_PERIOD_S = 2.0  # Segundos de gracia antes de confirmar tiro de 0 pines
 current_config: dict = {
     "max_players": 6,
     "frames_per_game": 10,
@@ -76,7 +78,7 @@ app.add_middleware(
 
 async def on_pin_fallen(pin_number: int):
     """Limit switch activado → acumular pin caído"""
-    global current_game, is_strike_turn, timer_active
+    global current_game, ball_return_count, is_strike_turn, timer_active
     if not current_game:
         logger.warning(f"Pin {pin_number} caído pero no hay partida activa")
         return
@@ -115,13 +117,34 @@ async def on_pin_fallen(pin_number: int):
             })
 
 
+async def _commit_gutter_ball():
+    """Espera el periodo de gracia y confirma tiro de 0 pines (canaleta)."""
+    global _grace_commit_task
+    await asyncio.sleep(GRACE_PERIOD_S)
+    if not current_game:
+        return
+    player = current_game.current_player
+    if player and player.current_frame:
+        tiros_en_frame = len(player.current_frame.rolls)
+        if tiros_en_frame == 0:
+            logger.info("🎱 Gracia expirada — confirmando canaleta (0 pinos)")
+            result = current_game.commit_current_roll()
+            if result and result.get("committed"):
+                await manager.broadcast({
+                    "type": "roll_committed",
+                    "game_state": current_game.to_dict(),
+                    **(result or {})
+                })
+    _grace_commit_task = None
+
+
 async def on_ball_returned():
     """
     Sensor detectó retorno de bola.
     - 1er retorno → confirmar tiro, esperar 2do
     - 2do retorno → confirmar tiro, resetear pines, timer 20s
     """
-    global current_game, ball_return_count, is_strike_turn, last_ball_time, timer_active
+    global current_game, ball_return_count, is_strike_turn, last_ball_time, timer_active, _grace_commit_task
 
     # Ignorar si el timer está activo
     if timer_active:
@@ -151,8 +174,11 @@ async def on_ball_returned():
     player = current_game.current_player
     if player and player.current_frame:
         tiros_en_frame = len(player.current_frame.rolls)
-        # Confirmar si: botó algo, o ya tiene un 1er tiro (este es el 2do retorno)
-        if player.pending_pins > 0 or tiros_en_frame == 1 or (tiros_en_frame == 0 and ball_return_count >= 1):
+        if player.pending_pins > 0 or tiros_en_frame == 1:
+            # Pinos cayeron o es el 2do tiro del frame → confirmar inmediatamente
+            if _grace_commit_task and not _grace_commit_task.done():
+                _grace_commit_task.cancel()
+                _grace_commit_task = None
             result = current_game.commit_current_roll()
             if result and result.get("committed"):
                 await manager.broadcast({
@@ -160,6 +186,11 @@ async def on_ball_returned():
                     "game_state": current_game.to_dict(),
                     **(result or {})
                 })
+        elif tiros_en_frame == 0:
+            # Sin pinos registrados en el 1er tiro → posible canaleta, esperar gracia
+            if not _grace_commit_task or _grace_commit_task.done():
+                logger.info(f"🎱 Sin pinos — esperando {GRACE_PERIOD_S}s (posible canaleta)")
+                _grace_commit_task = asyncio.create_task(_commit_gutter_ball())
 
 
     # 2do retorno → resetear y arrancar timer
@@ -187,11 +218,14 @@ async def on_ball_returned():
 
 async def on_timer_done():
     """Timer 20s terminó → resetear todo y habilitar pines"""
-    global timer_active, ball_return_count, is_strike_turn, last_ball_time
+    global timer_active, ball_return_count, is_strike_turn, last_ball_time, _grace_commit_task
     timer_active = False
     ball_return_count = 0
     is_strike_turn = False
     last_ball_time = 0.0
+    if _grace_commit_task and not _grace_commit_task.done():
+        _grace_commit_task.cancel()
+        _grace_commit_task = None
     logger.info("⏱️ Timer terminado — pines y sensores habilitados")
     await manager.broadcast({"type": "timer_done"})
 
@@ -200,11 +234,14 @@ async def on_timer_done():
 
 @app.post("/api/game/new")
 async def new_game(request: NewGameRequest):
-    global current_game, ball_return_count, is_strike_turn, last_ball_time, timer_active
+    global current_game, ball_return_count, is_strike_turn, last_ball_time, timer_active, _grace_commit_task
     ball_return_count = 0
     is_strike_turn = False
     last_ball_time = 0.0
     timer_active = False
+    if _grace_commit_task and not _grace_commit_task.done():
+        _grace_commit_task.cancel()
+        _grace_commit_task = None
     current_game = BowlingGame(players=request.players, config=current_config)
     game_dict = current_game.to_dict()
 
