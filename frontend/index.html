@@ -433,6 +433,7 @@ function handleWSMessage(msg) {
     case 'game_started':
       renderGame();
       setLed('rojo', true);
+      setLed('verde', true);
       showToast('¡PARTIDA INICIADA!', ''); break;
 
     case 'pin_fallen':
@@ -448,18 +449,21 @@ function handleWSMessage(msg) {
       if (msg.game_over) showToast('🏆 FIN · GANADOR: ' + msg.winner, 'strike');
       break;
 
-    case 'ball_returning':
-      setLed('verde', true); setLed('rojo', false);
-      showToast('🎱 RETORNANDO BOLA...', ''); break;
-
     case 'ball_ready':
-      setLed('verde', false); setLed('rojo', true);
-      showToast('🔴 BOLA LISTA', ''); break;
+      setLed('verde', true);
+      showToast('🟢 BOLA LISTA — A TIRAR', ''); break;
 
     case 'ordering_pins':
+      setLed('verde', false);
       setLed('amarillo', true);
       startTimer(msg.timer_seconds || 20);
-      showToast('🔧 ORDENANDO PINES...', ''); break;
+      showToast('🔧 COLOCANDO PINES...', ''); break;
+
+    case 'timer_done':
+      setLed('amarillo', false);
+      setLed('verde', true);
+      stopTimer();
+      showToast('✅ PINES LISTOS — ¡A TIRAR!', ''); break;
 
     case 'game_ended':
       gameState = msg.game_state || null;
@@ -601,7 +605,6 @@ function startTimer(seconds) {
     fill.style.width = (timerSeconds / timerTotal * 100) + '%';
     if (timerSeconds <= 0) {
       stopTimer();
-      showToast('✅ PINES LISTOS — ¡A TIRAR!', '');
     }
   }, 1000);
 }
@@ -609,7 +612,6 @@ function startTimer(seconds) {
 function stopTimer() {
   if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
   document.getElementById('timerBar').style.display = 'none';
-  setLed('amarillo', false);
 }
 
 // ── ACTIONS ────────────────────────────────────────────

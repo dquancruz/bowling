@@ -232,17 +232,14 @@ class GPIOHandler:
     # ─── SECUENCIAS ──────────────────────────────────────────────────────────
 
     async def secuencia_retorno_bola(self):
-        """Activar alimentador + LED verde (bola en camino)."""
+        """Activar alimentador mientras la bola retorna (LED amarillo ya activo)."""
         logger.info("🎱 Iniciando retorno de bola")
-        self.led_rojo(False)
-        self.led_verde(True)
         self.alimentador(True)
 
     async def bola_lista(self):
-        """Bola llegó al jugador → apagar alimentador, LED rojo ON"""
+        """Bola llegó → apagar alimentador, LED verde ON (jugador puede tirar)."""
         self.alimentador(False)
-        self.led_verde(False)
-        self.led_rojo(True)
+        self.led_verde(True)
         logger.info("✅ Bola lista para tirar")
 
     async def _ciclo_limpieza(self):
@@ -278,6 +275,7 @@ class GPIOHandler:
         2. Timer termina → LED amarillo OFF
         """
         logger.info("🔧 Iniciando secuencia ordenado de pines")
+        self.led_verde(False)
         self.led_amarillo(True)
         logger.info(f"⏱️  Timer {TIMER_PINES_S}s — colocar pines manualmente")
 
@@ -290,6 +288,7 @@ class GPIOHandler:
         try:
             await asyncio.sleep(TIMER_PINES_S)
             self.led_amarillo(False)
+            self.led_verde(True)
             logger.info("✅ Timer terminado — reseteando pines y avanzando turno")
             if self._timer_done_callback:
                 await self._timer_done_callback()

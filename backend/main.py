@@ -247,6 +247,7 @@ async def new_game(request: NewGameRequest):
 
     if gpio_handler:
         gpio_handler.led_rojo(True)
+        gpio_handler.led_verde(True)
 
     await manager.broadcast({"type": "game_started", "game_state": game_dict})
     logger.info(f"🎳 Nueva partida con {len(request.players)} jugadores")
