@@ -154,6 +154,11 @@ class GPIOHandler:
                 except Exception as e:
                     logger.error(f"   ❌ Error registrando sensor GPIO {sensor_pin}: {e}")
 
+            # ── Salidas: LEDs (LOW = apagado al arrancar) ──
+            for led_pin in [GPIO_LED_VERDE, GPIO_LED_ROJO, GPIO_LED_AMARILLO]:
+                self.gpio.setup(led_pin, GPIO.OUT, initial=GPIO.LOW)
+                logger.info(f"   LED → GPIO {led_pin}")
+
             # ── Salida: Relay alimentador (HIGH = inactivo) ──
             self.gpio.setup(GPIO_RELAY_ALIMENTADOR, GPIO.OUT, initial=GPIO.HIGH)
 
@@ -211,13 +216,13 @@ class GPIOHandler:
 
     # LEDs
     def led_verde(self, state: bool):
-        pass  # LEDs desconectados
+        self._set_led(GPIO_LED_VERDE, state)
 
     def led_rojo(self, state: bool):
-        pass  # LEDs desconectados
+        self._set_led(GPIO_LED_ROJO, state)
 
     def led_amarillo(self, state: bool):
-        pass  # LEDs desconectados
+        self._set_led(GPIO_LED_AMARILLO, state)
 
     # Relay alimentador
     def alimentador(self, active: bool):
@@ -240,27 +245,31 @@ class GPIOHandler:
         self.led_rojo(True)
         logger.info("✅ Bola lista para tirar")
 
+    async def _ciclo_limpieza(self):
+        self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA,   667)   # 15°
+        self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA_2, 2028)  # 137.5°
+        await asyncio.sleep(1)
+        self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA,   2500)  # 180°
+        self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA_2, 500)   # 0°
+        await asyncio.sleep(1)
+        self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA,   667)   # 15°
+        self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA_2, 2028)  # 137.5°
+        await asyncio.sleep(1)
+
     async def limpiar_pinos(self):
         """
         Secuencia manual de limpieza activada desde el botón en la UI.
-        Replica el código independiente que funciona: 137.5° → 15° → 137.5° → apagar.
+        Ejecuta 2 ciclos: 15° → 180° → 15° (Servo1) / 137.5° → 0° → 137.5° (Servo2).
         """
-        logger.info("🔧 Limpieza manual de pinos — iniciando servos")
+        logger.info("🔧 Limpieza manual de pinos — iniciando servos (2 ciclos)")
         if self.pi and not self._simulation_mode:
-            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA,   2028)  # 137.5°
-            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA_2, 667)   # 15°
-            await asyncio.sleep(1)
-            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA,   667)   # 15°
-            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA_2, 2028)  # 137.5°
-            await asyncio.sleep(1)
-            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA,   2028)  # 137.5°
-            self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA_2, 667)   # 15°
-            await asyncio.sleep(1)
+            await self._ciclo_limpieza()
+            await self._ciclo_limpieza()
             self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA,   0)     # apagar señal
             self.pi.set_servo_pulsewidth(GPIO_SERVO_PALANCA_2, 0)     # apagar señal
-            logger.info("✅ Limpieza completada")
+            logger.info("✅ Limpieza completada (2 ciclos)")
         else:
-            logger.info("🎮 [SIM] Servo1: 137.5° → 15° → 137.5° | Servo2: 15° → 137.5° → 15° → off")
+            logger.info("🎮 [SIM] 2x: Servo1: 15° → 180° → 15° | Servo2: 137.5° → 0° → 137.5° → off")
 
     async def secuencia_ordenar_pines(self):
         """

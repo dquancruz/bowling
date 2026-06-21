@@ -21,8 +21,8 @@ Raspberry Pi 4
         ├── LED rojo                 → bola lista para tirar (GPIO 26)
         ├── LED amarillo             → timer 20s para colocar pines (GPIO 20)
         ├── Relay                    → motor alimentador de bolas (GPIO 21)
-        ├── Servo U izquierdo        → abre en U para limpiar carril / palanca (GPIO 12)
-        └── Servo U derecho          → abre en U para limpiar carril (GPIO 13)
+        ├── Servo palanca 1          → limpieza de pinos (GPIO 13)
+        └── Servo palanca 2          → limpieza de pinos, movimiento espejo (GPIO 12)
 ```
 
 ---
@@ -54,8 +54,8 @@ Raspberry Pi 4
 | LED rojo                 | 26         | 37         | Digital           | 220Ω entre GPIO y GND     |
 | LED amarillo             | 20         | 38         | Digital           | 220Ω entre GPIO y GND     |
 | Relay alimentador        | 21         | 40         | Digital           | Activo en LOW             |
-| Servo U izquierdo        | 12         | 32         | pigpio PWM        | VCC → 5V externo          |
-| Servo U derecho          | 13         | 33         | pigpio PWM        | VCC → 5V externo          |
+| Servo palanca 1          | 13         | 33         | pigpio PWM        | VCC → 5V externo          |
+| Servo palanca 2          | 12         | 32         | pigpio PWM        | VCC → 5V externo, espejo  |
 
 ---
 
@@ -67,28 +67,35 @@ Pull-up interno activado. Cada switch va entre GPIO y GND:
 - Switch **cerrado** → GPIO LOW → pin caído → dispara interrupción
 
 ### Sensores de retorno de bola
-Dos sensores, uno por canaleta (derecha e izquierda). El software hace debounce de 5 segundos entre detecciones para evitar contar el mismo retorno dos veces. El primer sensor que detecte la bola activa el retorno; el segundo se ignora.
+Dos sensores, uno por canaleta (derecha e izquierda). El software hace debounce de 5 segundos entre detecciones para evitar contar el mismo retorno dos veces — el primer sensor que detecte la bola activa el retorno; el segundo se ignora.
+
+Cuando la bola regresa sin haber derribado ningún pino (canaleta / gutter ball), el sistema espera 2 segundos antes de confirmar el tiro con 0 pinos. Esto evita commits prematuros si la bola pasa el sensor antes de que el jugador haya tirado.
 
 ### LEDs
-Resistencia de 220Ω entre GPIO y GND. Los LEDs están actualmente desconectados en software (`pass`) — habilitar en `gpio_handler.py` si se reconectan.
+Resistencia de 220Ω entre GPIO y GND. Se configuran como salida al arrancar (LOW = apagado). El sistema los controla automáticamente según el flujo de juego.
 
 ### Relay (alimentador de bolas)
 Activo en LOW. El motor se conecta al circuito controlado por el relay.
 
-### Servos U (Futaba S3003)
+### Servos palanca (Futaba S3003)
 Controlados con `pigpio` (hardware PWM) — **no** con `RPi.GPIO.PWM`.
-- Señal → GPIO 12 (izquierdo) y GPIO 13 (derecho)
+- Servo palanca 1 → GPIO 13 (Pin físico 33)
+- Servo palanca 2 → GPIO 12 (Pin físico 32)
 - VCC → 5V **externo** (no del pin de la Pi — los servos consumen demasiada corriente)
 - GND → GND común con la Pi
 
-Pulsewidths de referencia:
+Los dos servos se mueven en **espejo**: cuando el servo 1 avanza, el servo 2 retrocede, y viceversa.
 
-| Ángulo | Pulsewidth | Uso                        |
-|:------:|:----------:|----------------------------|
-| 10°    | 611 µs     | Reposo / cerrado           |
-| 90°    | 1500 µs    | Centro                     |
-| 170°   | 2389 µs    | Abierto en U / empuje      |
-| 180°   | 2500 µs    | Máximo                     |
+| Ángulo  | Pulsewidth | Servo 1 (GPIO 13)  | Servo 2 (GPIO 12)  |
+|:-------:|:----------:|:------------------:|:------------------:|
+| 15°     | 667 µs     | Posición de reposo | Posición activa    |
+| 137.5°  | 2028 µs    | Posición activa    | Posición de reposo |
+
+Secuencia de limpieza (activada desde el botón en la UI):
+1. Servo 1 → 15° / Servo 2 → 137.5° (reposo)
+2. Servo 1 → 137.5° / Servo 2 → 15° (empuje en espejo)
+3. Servo 1 → 15° / Servo 2 → 137.5° (vuelven a reposo)
+4. Ambos → señal apagada
 
 ---
 
@@ -99,22 +106,30 @@ Jugador tira
     ↓
 Limit switches detectan pines caídos → se acumulan en el marcador
     ↓
-[Si 10 pines en 1er tiro → CHUZA]
+[Si 10 pines en 1er tiro → CHUZA → saltar al reset automático]
     ↓
 Bola regresa por la canaleta
     ↓
-Sensor detecta retorno #1 → confirma tiro, LED rojo ON (bola lista)
+🟢 LED verde ON (bola en camino)
+    ↓
+Sensor detecta retorno #1 → confirma tiro
+🟢 LED verde OFF → 🔴 LED rojo ON (bola lista para tirar)
     ↓
 Jugador tira 2do tiro
     ↓
-Sensor detecta retorno #2 → confirma tiro
+🟢 LED verde ON (bola en camino)
     ↓
-Secuencia de reset:
-    ⚙️  Servos U: 10° → 170° (abre, barre pines) → 10° (cierra)
-    ⚙️  Servo palanca (GPIO 12): 137.5° → 15° → 137.5° (empuja pines caídos)
+Sensor detecta retorno #2 → confirma tiro
+🟢 LED verde OFF → 🔴 LED rojo ON
+    ↓
+Reset automático:
     🟡 LED amarillo ON
     ⏱️  Timer 20 segundos (colocar pines manualmente)
     🟡 LED amarillo OFF → listo para nuevo turno
+
+Limpieza manual (botón en UI, en cualquier momento):
+    ⚙️  Servo 1 (GPIO 13): 15° → 137.5° → 15°
+    ⚙️  Servo 2 (GPIO 12): 137.5° → 15° → 137.5° (espejo)
 ```
 
 ---
@@ -270,26 +285,29 @@ Documentación interactiva: `http://<IP>:8000/docs`
 
 ```python
 # ── Sensores de bola ──
-GPIO_SENSOR_BOLA   = 16   # Canaleta derecha  → Pin físico 36
+GPIO_SENSOR_BOLA   = 16   # Canaleta derecha   → Pin físico 36
 GPIO_SENSOR_BOLA_2 = 14   # Canaleta izquierda → Pin físico 8
 
-# ── Servos (pigpio) ──
-GPIO_SERVO_U_IZQ = 12     # Servo U izquierdo / palanca → Pin físico 32
-GPIO_SERVO_U_DER = 13     # Servo U derecho             → Pin físico 33
+# ── LEDs ──
+GPIO_LED_VERDE    = 19   # Bola en camino de regreso → Pin físico 35
+GPIO_LED_ROJO     = 26   # Bola lista para tirar     → Pin físico 37
+GPIO_LED_AMARILLO = 20   # Timer 20s activo           → Pin físico 38
 
-SERVO_U_REPOSO  = 10      # grados → cerrado (611 µs)
-SERVO_U_ABIERTO = 170     # grados → abierto en U (2389 µs)
-SERVO_U_TIEMPO  = 2.0     # segundos abierto antes de cerrar
+# ── Servos palanca (pigpio) ──
+GPIO_SERVO_PALANCA   = 13  # Servo palanca 1 → Pin físico 33
+GPIO_SERVO_PALANCA_2 = 12  # Servo palanca 2 → Pin físico 32 (movimiento espejo)
 
-SERVO_REPOSO = 137.5      # grados → palanca en reposo (2028 µs)
-SERVO_EMPUJA = 15         # grados → palanca empujando (667 µs)
-SERVO_TIEMPO = 1.5        # segundos empujando antes de volver
+# Servo palanca 1: reposo=15° (667 µs),     activo=137.5° (2028 µs)
+# Servo palanca 2: reposo=137.5° (2028 µs), activo=15° (667 µs)
 
 # ── Timer de reset ──
 TIMER_PINES_S = 20        # segundos para colocar pines manualmente
 
 # ── Debounce ──
 DEBOUNCE_MS = 300         # milisegundos entre activaciones de limit switch
+
+# ── Periodo de gracia (canaleta) ──
+GRACE_PERIOD_S = 2.0      # segundos antes de confirmar tiro de 0 pinos
 ```
 
 ---
