@@ -258,6 +258,7 @@ sudo journalctl -u bowling -f
 | GET    | /api/game/current      | Estado de la partida actual              |
 | POST   | /api/game/reset-pins   | Confirmar tiro manualmente               |
 | POST   | /api/game/manual-pin   | Registrar pin caído (testing)            |
+| POST   | /api/game/simulate-ball-return | Simular retorno de bola (testing) |
 | POST   | /api/game/end          | Finalizar partida                        |
 | GET    | /api/config            | Obtener configuración                    |
 | PUT    | /api/config            | Actualizar configuración                 |

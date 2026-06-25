@@ -306,6 +306,12 @@ input:focus, select:focus { border-color: var(--accent); }
       </div>
 
       <div class="control-card">
+        <h3>Simular Retorno de Bola</h3>
+        <p style="font-size:0.8rem;color:var(--muted);margin-bottom:20px;font-family:'Share Tech Mono',monospace;">Simula que la bola regresó por la canaleta (testing sin hardware)</p>
+        <button class="btn btn-secondary" id="btnBallReturn" onclick="simulateBallReturn()">🎱 RETORNO DE BOLA</button>
+      </div>
+
+      <div class="control-card">
         <h3>Simular / Corregir Pin</h3>
         <p style="font-size:0.8rem;color:var(--muted);margin-bottom:14px;font-family:'Share Tech Mono',monospace;">Para testing o corrección manual</p>
         <div class="pin-buttons">
@@ -385,8 +391,8 @@ input:focus, select:focus { border-color: var(--accent); }
 <div id="toast"></div>
 
 <script>
-const API    = `${location.protocol}//${location.hostname}:8000/api`;
-const WS_URL = `ws://${location.hostname}:8000/ws`;
+const API    = `${location.origin}/api`;
+const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
 
 let ws = null;
 let gameState = null;
@@ -428,7 +434,12 @@ function handleWSMessage(msg) {
 
   switch(msg.type) {
     case 'initial_state':
-      renderGame(); break;
+      renderGame();
+      if (gameState && gameState.status !== 'finished') {
+        setLed('rojo', true);
+        setLed('verde', true);
+      }
+      break;
 
     case 'game_started':
       renderGame();
@@ -641,6 +652,18 @@ async function manualPin(n) {
 
 async function resetPins() {
   await fetch(`${API}/game/reset-pins`, { method: 'POST' });
+}
+
+async function simulateBallReturn() {
+  const btn = document.getElementById('btnBallReturn');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${API}/game/simulate-ball-return`, { method: 'POST' });
+    if (!res.ok) showToast('NO HAY PARTIDA ACTIVA', '');
+  } catch(e) {
+    showToast('ERROR DE CONEXIÓN', '');
+  }
+  setTimeout(() => { btn.disabled = false; }, 1000);
 }
 
 async function limpiarPinos() {

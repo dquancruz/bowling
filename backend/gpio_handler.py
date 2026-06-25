@@ -59,9 +59,9 @@ GPIO_SENSOR_BOLA_2 = 14  # Sensor canaleta izquierda → Pin físico 8
 #
 #  Componente         → GPIO (BCM) → Pin físico
 #  -----------------------------------------------
-#  LED verde          → GPIO 19   → Pin físico 35   (bola en camino)
-#  LED rojo           → GPIO 26   → Pin físico 37   (bola lista)
-#  LED amarillo       → GPIO 20   → Pin físico 38   (timer 20s)
+#  LED verde          → GPIO 19   → Pin físico 35   (jugador puede tirar)
+#  LED rojo           → GPIO 26   → Pin físico 37   (partida activa)
+#  LED amarillo       → GPIO 20   → Pin físico 38   (bola retornando / timer 20s)
 #  Relay alimentador  → GPIO 21   → Pin físico 40   (motor retorno bola)
 #  Servo palanca      → GPIO 13   → Pin físico 33   (PWM 50Hz, limpieza manual)
 #
@@ -69,9 +69,9 @@ GPIO_SENSOR_BOLA_2 = 14  # Sensor canaleta izquierda → Pin físico 8
 #  Relay: activo en LOW
 #  Servo: VCC → 5V externo, GND común, señal → GPIO 13
 
-GPIO_LED_VERDE    = 19   # Bola en camino de regreso   → Pin físico 35
-GPIO_LED_ROJO     = 26   # Bola llegó, listo para tirar → Pin físico 37
-GPIO_LED_AMARILLO = 20   # Timer 20s - colocar pines    → Pin físico 38
+GPIO_LED_VERDE    = 19   # Jugador puede tirar          → Pin físico 35
+GPIO_LED_ROJO     = 26   # Partida activa               → Pin físico 37
+GPIO_LED_AMARILLO = 20   # Bola retornando / timer 20s  → Pin físico 38
 
 GPIO_RELAY_ALIMENTADOR = 21  # Relay motor retorno de bola → Pin físico 40
 GPIO_SERVO_PALANCA     = 13  # Servo limpieza de pinos (PWM) → Pin físico 33

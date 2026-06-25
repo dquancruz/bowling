@@ -161,9 +161,11 @@ async def on_ball_returned():
     ball_return_count += 1
     logger.info(f"🎱 Retorno válido #{ball_return_count}")
 
-    if gpio_handler:
-        await gpio_handler.bola_lista()
-    await manager.broadcast({"type": "ball_ready"})
+    # Solo encender verde en el 1er retorno — en el 2do se activa el timer inmediatamente
+    if ball_return_count == 1:
+        if gpio_handler:
+            await gpio_handler.bola_lista()
+        await manager.broadcast({"type": "ball_ready"})
 
     if not current_game:
         return
@@ -291,6 +293,15 @@ async def manual_pin_update(update: ManualPinUpdate):
     return {"status": "ok"}
 
 
+@app.post("/api/game/simulate-ball-return")
+async def simulate_ball_return():
+    """Simular retorno de bola (testing sin hardware)"""
+    global last_ball_time
+    last_ball_time = 0.0  # bypass debounce de doble sensor físico
+    await on_ball_returned()
+    return {"status": "ok"}
+
+
 @app.post("/api/game/end")
 async def end_game():
     global current_game, ball_return_count, is_strike_turn
@@ -367,4 +378,5 @@ if os.path.exists(frontend_path):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
